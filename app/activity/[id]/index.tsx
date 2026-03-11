@@ -52,8 +52,8 @@ export default function ActivityDetailScreen() {
   const isParticipant = activity.participants.includes(user?.uid ?? '');
   const isFull = activity.currentSlots <= 0;
   const joined = activity.maxSlots - activity.currentSlots;
-  const dateStr = activity.dateTime.toDate
-    ? format(activity.dateTime.toDate(), 'EEEE, MMMM d · h:mm a')
+  const dateStr = activity.dateTime
+    ? format(new Date(activity.dateTime), 'EEEE, MMMM d · h:mm a')
     : '';
 
   const handleJoin = async () => {

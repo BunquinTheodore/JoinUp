@@ -57,8 +57,8 @@ export default function GroupChatScreen() {
   const renderMessage = ({ item }: { item: Message }) => {
     const isMe = item.senderId === user?.uid;
     const isSystem = item.type === 'system';
-    const timeStr = item.createdAt.toDate
-      ? format(item.createdAt.toDate(), 'h:mm a')
+    const timeStr = item.createdAt
+      ? format(new Date(item.createdAt), 'h:mm a')
       : '';
 
     if (isSystem) {
@@ -135,8 +135,8 @@ export default function GroupChatScreen() {
       {activity && (
         <View style={styles.eventBanner}>
           <Text style={styles.eventBannerText}>
-            {activity.dateTime.toDate
-              ? `Tomorrow at ${format(activity.dateTime.toDate(), 'h:mm a')}`
+            {activity.dateTime
+              ? `Tomorrow at ${format(new Date(activity.dateTime), 'h:mm a')}`
               : ''
             }
           </Text>

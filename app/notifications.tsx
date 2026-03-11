@@ -119,8 +119,8 @@ export default function NotificationsScreen() {
     index: number;
   }) => {
     const icon = ICON_MAP[item.type] ?? { name: 'notifications' as keyof typeof Ionicons.glyphMap, color: Colors.slate };
-    const timeAgo = item.createdAt.toDate
-      ? formatDistanceToNow(item.createdAt.toDate(), { addSuffix: true })
+    const timeAgo = item.createdAt
+      ? formatDistanceToNow(new Date(item.createdAt), { addSuffix: true })
       : '';
 
     return (

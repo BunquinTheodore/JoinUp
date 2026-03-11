@@ -63,8 +63,8 @@ export default function ExploreScreen() {
           activities.map((activity, index) => {
             const chipColor = CategoryColors[activity.category] ?? Colors.accent;
             const joined = activity.maxSlots - activity.currentSlots;
-            const dateStr = activity.dateTime.toDate
-              ? format(activity.dateTime.toDate(), 'EEE, h:mm a')
+            const dateStr = activity.dateTime
+              ? format(new Date(activity.dateTime), 'EEE, h:mm a')
               : '';
 
             return (

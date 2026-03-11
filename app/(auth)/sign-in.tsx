@@ -27,8 +27,10 @@ export default function SignInScreen() {
 
   const handleSignIn = async () => {
     if (!email.trim() || !password.trim()) return;
-    await signIn(email, password);
-    router.replace('/(tabs)');
+    try {
+      await signIn(email, password);
+      router.replace('/(tabs)');
+    } catch {}
   };
 
   return (
@@ -106,8 +108,10 @@ export default function SignInScreen() {
           <SecondaryButton
             title="Sign in with Google"
             onPress={async () => {
-              await signInWithGoogle();
-              router.replace('/(tabs)');
+              try {
+                await signInWithGoogle();
+                router.replace('/(tabs)');
+              } catch {}
             }}
             icon={<Text style={styles.googleIcon}>G</Text>}
           />

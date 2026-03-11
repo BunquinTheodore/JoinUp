@@ -1,149 +1,99 @@
 import { useState, useEffect, useCallback } from 'react';
+import { supabase } from '../lib/supabase';
 import type { Activity } from '../types';
 
-const now = new Date();
-const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-
-const makeTimestamp = (date: Date) => ({
-  seconds: Math.floor(date.getTime() / 1000),
-  nanoseconds: 0,
-  toDate: () => date,
-});
-
-const MOCK_ACTIVITIES: Activity[] = [
-  {
-    id: 'act-1',
-    title: 'Morning Yoga Session',
-    description: 'Join us for a refreshing morning yoga session at Central Park. All levels welcome! Bring your own mat and water bottle.',
-    category: 'Fitness',
-    location: { name: 'Central Park', lat: 37.7749, lng: -122.4194 },
-    dateTime: makeTimestamp(new Date(tomorrow.setHours(7, 0, 0, 0))),
-    maxSlots: 8,
-    currentSlots: 2,
-    participants: ['user-2', 'user-3', 'user-4', 'user-5', 'user-6', 'user-7'],
-    hostId: 'user-2',
-    hostName: 'Sarah',
-    hostPhoto: '',
-    coverImage: '',
-    requiresApproval: false,
-    reactions: { fire: 12, heart: 8, like: 15 },
-    status: 'active',
-    createdAt: makeTimestamp(new Date()),
-  },
-  {
-    id: 'act-2',
-    title: 'Coffee & Study',
-    description: 'Looking for study buddies! Let\'s grab coffee and work on our projects together. Great wifi and cozy atmosphere.',
-    category: 'Café',
-    location: { name: 'Brew House Café', lat: 37.7849, lng: -122.4094 },
-    dateTime: makeTimestamp(new Date(tomorrow.setHours(14, 0, 0, 0))),
-    maxSlots: 6,
-    currentSlots: 0,
-    participants: ['user-1', 'user-2', 'user-3', 'user-4', 'user-5', 'user-6'],
-    hostId: 'user-3',
-    hostName: 'Alex',
-    hostPhoto: '',
-    requiresApproval: false,
-    reactions: { fire: 5, heart: 10, like: 8 },
-    status: 'active',
-    createdAt: makeTimestamp(new Date()),
-  },
-  {
-    id: 'act-3',
-    title: 'Sunset Hiking Trail',
-    description: 'Beautiful sunset hike along the coastal trail. Moderate difficulty, about 5 miles round trip.',
-    category: 'Outdoors',
-    location: { name: 'Coastal Trail Head', lat: 37.7649, lng: -122.5094 },
-    dateTime: makeTimestamp(new Date(tomorrow.setHours(17, 0, 0, 0))),
-    maxSlots: 10,
-    currentSlots: 5,
-    participants: ['user-1', 'user-4', 'user-5', 'user-6', 'user-7'],
-    hostId: 'user-4',
-    hostName: 'Jamie',
-    hostPhoto: '',
-    coverImage: '',
-    requiresApproval: false,
-    reactions: { fire: 20, heart: 15, like: 25 },
-    status: 'active',
-    createdAt: makeTimestamp(new Date()),
-  },
-  {
-    id: 'act-4',
-    title: 'Beach Volleyball',
-    description: 'Casual beach volleyball game. No experience needed, just come have fun!',
-    category: 'Outdoors',
-    location: { name: 'Venice Beach', lat: 33.985, lng: -118.473 },
-    dateTime: makeTimestamp(new Date(tomorrow.setHours(10, 0, 0, 0))),
-    maxSlots: 12,
-    currentSlots: 4,
-    participants: ['user-1', 'user-2', 'user-3', 'user-5', 'user-6', 'user-7', 'user-8', 'user-9'],
-    hostId: 'user-5',
-    hostName: 'Lisa',
-    hostPhoto: '',
-    coverImage: '',
-    requiresApproval: false,
-    reactions: { fire: 30, heart: 20, like: 35 },
-    status: 'active',
-    createdAt: makeTimestamp(new Date()),
-  },
-  {
-    id: 'act-5',
-    title: 'Dinner & Wine Tasting',
-    description: 'An evening of fine dining and wine tasting at a downtown restaurant. Limited spots available!',
-    category: 'Food',
-    location: { name: 'Downtown SF', lat: 37.7849, lng: -122.4094 },
-    dateTime: makeTimestamp(new Date(tomorrow.setHours(19, 0, 0, 0))),
-    maxSlots: 6,
-    currentSlots: 2,
-    participants: ['user-1', 'user-3', 'user-6', 'user-7'],
-    hostId: 'user-6',
-    hostName: 'David',
-    hostPhoto: '',
-    coverImage: '',
-    requiresApproval: true,
-    reactions: { fire: 15, heart: 25, like: 18 },
-    status: 'active',
-    createdAt: makeTimestamp(new Date()),
-  },
-  {
-    id: 'act-6',
-    title: 'Game Night',
-    description: 'Board games and video games night! Bring your favorites or try something new.',
-    category: 'Gaming',
-    location: { name: 'Game Lounge', lat: 37.7749, lng: -122.4294 },
-    dateTime: makeTimestamp(new Date(tomorrow.setHours(20, 0, 0, 0))),
-    maxSlots: 8,
-    currentSlots: 5,
-    participants: ['user-2', 'user-4', 'user-8'],
-    hostId: 'user-8',
-    hostName: 'Chris',
-    hostPhoto: '',
-    requiresApproval: false,
-    reactions: { fire: 8, heart: 12, like: 10 },
-    status: 'active',
-    createdAt: makeTimestamp(new Date()),
-  },
-];
+function mapActivity(row: any): Activity {
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    category: row.category,
+    location: {
+      name: row.location_name,
+      lat: row.location_lat,
+      lng: row.location_lng,
+    },
+    dateTime: row.date_time,
+    maxSlots: row.max_slots,
+    currentSlots: row.current_slots ?? row.max_slots,
+    participants: row.participant_ids ?? [],
+    hostId: row.host_id,
+    hostName: row.host_name ?? '',
+    hostPhoto: row.host_photo ?? '',
+    coverImage: row.cover_image ?? undefined,
+    requiresApproval: row.requires_approval,
+    reactions: {
+      fire: row.reaction_fire ?? 0,
+      heart: row.reaction_heart ?? 0,
+      like: row.reaction_like ?? 0,
+    },
+    status: row.status,
+    createdAt: row.created_at,
+  };
+}
 
 export function useActivities() {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    // Simulate fetch
-    const timer = setTimeout(() => {
-      setActivities(MOCK_ACTIVITIES);
+  const fetchActivities = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      const { data, error: fetchError } = await supabase
+        .from('activities_full')
+        .select('*')
+        .eq('status', 'active')
+        .order('date_time', { ascending: true });
+
+      if (fetchError) throw fetchError;
+
+      if (data) {
+        // Fetch participant IDs for each activity
+        const activityIds = data.map((a: any) => a.id);
+        const { data: parts } = await supabase
+          .from('participants')
+          .select('activity_id, user_id')
+          .in('activity_id', activityIds.length > 0 ? activityIds : ['__none__'])
+          .eq('status', 'joined');
+
+        const participantMap: Record<string, string[]> = {};
+        (parts ?? []).forEach((p: any) => {
+          if (!participantMap[p.activity_id]) participantMap[p.activity_id] = [];
+          participantMap[p.activity_id].push(p.user_id);
+        });
+
+        setActivities(
+          data.map((row: any) =>
+            mapActivity({ ...row, participant_ids: participantMap[row.id] ?? [] })
+          )
+        );
+      }
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to load activities');
+    } finally {
       setIsLoading(false);
-    }, 800);
-    return () => clearTimeout(timer);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchActivities();
+  }, [fetchActivities]);
 
   const joinActivity = useCallback(async (activityId: string, userId: string) => {
     try {
+      const { error: joinError } = await supabase
+        .from('participants')
+        .insert({ activity_id: activityId, user_id: userId, status: 'joined' });
+
+      if (joinError) throw joinError;
+
+      // Optimistic update
       setActivities((prev) =>
         prev.map((a) =>
-          a.id === activityId && a.currentSlots > 0
+          a.id === activityId
             ? {
                 ...a,
                 currentSlots: a.currentSlots - 1,
@@ -152,13 +102,21 @@ export function useActivities() {
             : a
         )
       );
-    } catch (err) {
-      setError('Failed to join activity');
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to join activity');
     }
   }, []);
 
   const leaveActivity = useCallback(async (activityId: string, userId: string) => {
     try {
+      const { error: leaveError } = await supabase
+        .from('participants')
+        .delete()
+        .eq('activity_id', activityId)
+        .eq('user_id', userId);
+
+      if (leaveError) throw leaveError;
+
       setActivities((prev) =>
         prev.map((a) =>
           a.id === activityId
@@ -170,8 +128,8 @@ export function useActivities() {
             : a
         )
       );
-    } catch (err) {
-      setError('Failed to leave activity');
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to leave activity');
     }
   }, []);
 
@@ -187,5 +145,6 @@ export function useActivities() {
     joinActivity,
     leaveActivity,
     getActivity,
+    refetch: fetchActivities,
   };
 }

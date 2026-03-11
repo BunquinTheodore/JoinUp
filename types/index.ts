@@ -9,7 +9,7 @@ export interface User {
   activitiesHosted: string[];
   rating: number;
   ratingCount: number;
-  createdAt: FirebaseTimestamp;
+  createdAt: string; // ISO 8601
 }
 
 export interface Activity {
@@ -18,7 +18,7 @@ export interface Activity {
   description: string;
   category: 'Fitness' | 'Study' | 'Café' | 'Outdoors' | 'Gaming' | 'Social' | 'Food' | 'Other';
   location: { name: string; lat: number; lng: number };
-  dateTime: FirebaseTimestamp;
+  dateTime: string; // ISO 8601
   maxSlots: number;
   currentSlots: number;
   participants: string[];
@@ -29,7 +29,7 @@ export interface Activity {
   requiresApproval: boolean;
   reactions: { fire: number; heart: number; like: number };
   status: 'active' | 'cancelled' | 'completed';
-  createdAt: FirebaseTimestamp;
+  createdAt: string; // ISO 8601
 }
 
 export interface Message {
@@ -42,7 +42,7 @@ export interface Message {
   location?: { lat: number; lng: number };
   type: 'text' | 'location' | 'system';
   isPinned: boolean;
-  createdAt: FirebaseTimestamp;
+  createdAt: string; // ISO 8601
 }
 
 export interface Notification {
@@ -53,11 +53,5 @@ export interface Notification {
   body: string;
   activityId: string;
   read: boolean;
-  createdAt: FirebaseTimestamp;
-}
-
-export interface FirebaseTimestamp {
-  seconds: number;
-  nanoseconds: number;
-  toDate: () => Date;
+  createdAt: string; // ISO 8601
 }

@@ -19,8 +19,8 @@ export function ActivityCard({ activity, onPress, onJoin, style, index = 0 }: Ac
   const slotsLeft = activity.currentSlots;
   const isFull = slotsLeft <= 0;
   const chipColor = CategoryColors[activity.category] ?? Colors.accent;
-  const dateStr = activity.dateTime.toDate
-    ? format(activity.dateTime.toDate(), 'EEE, h:mm a')
+  const dateStr = activity.dateTime
+    ? format(new Date(activity.dateTime), 'EEE, h:mm a')
     : '';
   const joined = activity.maxSlots - activity.currentSlots;
 

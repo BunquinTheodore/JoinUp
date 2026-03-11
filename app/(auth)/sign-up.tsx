@@ -59,8 +59,10 @@ export default function SignUpScreen() {
 
   const handleSubmit = async () => {
     if (!validate()) return;
-    await signUp({ fullName, email, password, ageRange, interests });
-    router.replace('/(tabs)');
+    try {
+      await signUp({ fullName, email, password, ageRange, interests });
+      router.replace('/(tabs)');
+    } catch {}
   };
 
   const isValid =

@@ -1,128 +1,127 @@
 import { useState, useEffect, useCallback } from 'react';
+import { supabase } from '../lib/supabase';
 import type { Message } from '../types';
 
-const makeTimestamp = (date: Date) => ({
-  seconds: Math.floor(date.getTime() / 1000),
-  nanoseconds: 0,
-  toDate: () => date,
-});
-
-const MOCK_MESSAGES: Record<string, Message[]> = {
-  'act-1': [
-    {
-      id: 'msg-0',
-      activityId: 'act-1',
-      senderId: 'system',
-      senderName: 'System',
-      senderPhoto: '',
-      text: 'Sarah created the activity',
-      type: 'system',
-      isPinned: false,
-      createdAt: makeTimestamp(new Date(2026, 2, 4, 10, 30)),
-    },
-    {
-      id: 'msg-1',
-      activityId: 'act-1',
-      senderId: 'user-2',
-      senderName: 'Sarah',
-      senderPhoto: '',
-      text: 'Hey everyone! Looking forward to our yoga session tomorrow!',
-      type: 'text',
-      isPinned: false,
-      createdAt: makeTimestamp(new Date(2026, 2, 4, 10, 32)),
-    },
-    {
-      id: 'msg-2',
-      activityId: 'act-1',
-      senderId: 'user-3',
-      senderName: 'Mike',
-      senderPhoto: '',
-      text: 'Same here! What should we bring?',
-      type: 'text',
-      isPinned: false,
-      createdAt: makeTimestamp(new Date(2026, 2, 4, 10, 35)),
-    },
-    {
-      id: 'msg-3',
-      activityId: 'act-1',
-      senderId: 'user-1',
-      senderName: 'Marco Silva',
-      senderPhoto: '',
-      text: 'Just a yoga mat and water bottle!',
-      type: 'text',
-      isPinned: false,
-      createdAt: makeTimestamp(new Date(2026, 2, 4, 10, 36)),
-    },
-    {
-      id: 'msg-4',
-      activityId: 'act-1',
-      senderId: 'user-2',
-      senderName: 'Sarah',
-      senderPhoto: '',
-      text: "Perfect! I'll bring some extra mats just in case anyone forgets 😊",
-      type: 'text',
-      isPinned: false,
-      createdAt: makeTimestamp(new Date(2026, 2, 4, 10, 37)),
-    },
-    {
-      id: 'msg-5',
-      activityId: 'act-1',
-      senderId: 'user-1',
-      senderName: 'Marco Silva',
-      senderPhoto: '',
-      text: "That's really thoughtful, thanks!",
-      type: 'text',
-      isPinned: false,
-      createdAt: makeTimestamp(new Date(2026, 2, 4, 10, 38)),
-    },
-  ],
-};
+function mapMessage(row: any): Message {
+  return {
+    id: row.id,
+    activityId: row.activity_id,
+    senderId: row.sender_id,
+    senderName: row.sender_name ?? '',
+    senderPhoto: row.sender_photo ?? '',
+    text: row.text ?? undefined,
+    location:
+      row.location_lat != null && row.location_lng != null
+        ? { lat: row.location_lat, lng: row.location_lng }
+        : undefined,
+    type: row.type,
+    isPinned: row.is_pinned,
+    createdAt: row.created_at,
+  };
+}
 
 export function useChat(activityId: string) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Simulate realtime listener
-    const timer = setTimeout(() => {
-      setMessages(MOCK_MESSAGES[activityId] ?? []);
+    const fetchMessages = async () => {
+      const { data, error } = await supabase
+        .from('messages_full')
+        .select('*')
+        .eq('activity_id', activityId)
+        .order('created_at', { ascending: true });
+
+      if (!error && data) {
+        setMessages(data.map(mapMessage));
+      }
       setIsLoading(false);
-    }, 500);
-    return () => clearTimeout(timer);
+    };
+
+    fetchMessages();
+
+    // Subscribe to new messages in realtime
+    const channel = supabase
+      .channel(`chat:${activityId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `activity_id=eq.${activityId}`,
+        },
+        async (payload) => {
+          const { data } = await supabase
+            .from('messages_full')
+            .select('*')
+            .eq('id', payload.new.id)
+            .single();
+
+          if (data) {
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === data.id)) return prev;
+              return [...prev, mapMessage(data)];
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [activityId]);
 
   const sendMessage = useCallback(
     async (text: string, senderId: string, senderName: string) => {
-      const newMessage: Message = {
-        id: `msg-${Date.now()}`,
-        activityId,
-        senderId,
-        senderName,
-        senderPhoto: '',
-        text,
-        type: 'text',
-        isPinned: false,
-        createdAt: makeTimestamp(new Date()),
-      };
-      setMessages((prev) => [...prev, newMessage]);
+      const { data, error } = await supabase
+        .from('messages')
+        .insert({
+          activity_id: activityId,
+          sender_id: senderId,
+          text,
+          type: 'text',
+        })
+        .select()
+        .single();
+
+      if (!error && data) {
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === data.id)) return prev;
+          return [
+            ...prev,
+            mapMessage({ ...data, sender_name: senderName, sender_photo: '' }),
+          ];
+        });
+      }
     },
     [activityId]
   );
 
   const sendLocation = useCallback(
     async (lat: number, lng: number, senderId: string, senderName: string) => {
-      const newMessage: Message = {
-        id: `msg-${Date.now()}`,
-        activityId,
-        senderId,
-        senderName,
-        senderPhoto: '',
-        location: { lat, lng },
-        type: 'location',
-        isPinned: false,
-        createdAt: makeTimestamp(new Date()),
-      };
-      setMessages((prev) => [...prev, newMessage]);
+      const { data, error } = await supabase
+        .from('messages')
+        .insert({
+          activity_id: activityId,
+          sender_id: senderId,
+          location_lat: lat,
+          location_lng: lng,
+          type: 'location',
+        })
+        .select()
+        .single();
+
+      if (!error && data) {
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === data.id)) return prev;
+          return [
+            ...prev,
+            mapMessage({ ...data, sender_name: senderName, sender_photo: '' }),
+          ];
+        });
+      }
     },
     [activityId]
   );
