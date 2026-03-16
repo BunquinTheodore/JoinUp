@@ -10,7 +10,7 @@ import {
 import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
-import { format, formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow, parseISO } from 'date-fns';
 import { Colors, Typography, Spacing, BorderRadius, CategoryColors } from '../constants/theme';
 import { ScreenWrapper } from '../components/layout/ScreenWrapper';
 import { NavBar } from '../components/layout/NavBar';
@@ -27,7 +27,7 @@ const MOCK_NOTIFICATIONS: Notification[] = [
     body: 'Sofia Rivera joined "Morning Yoga in the Park"',
     activityId: 'act-1',
     read: false,
-    createdAt: { seconds: Date.now() / 1000 - 600, nanoseconds: 0, toDate: () => new Date(Date.now() - 600_000) } as any,
+    createdAt: new Date(Date.now() - 600_000).toISOString(),
   },
   {
     id: 'notif-2',
@@ -37,7 +37,7 @@ const MOCK_NOTIFICATIONS: Notification[] = [
     body: 'Lena Chen sent a message in "Coffee & Study Session"',
     activityId: 'act-2',
     read: false,
-    createdAt: { seconds: Date.now() / 1000 - 3600, nanoseconds: 0, toDate: () => new Date(Date.now() - 3_600_000) } as any,
+    createdAt: new Date(Date.now() - 3_600_000).toISOString(),
   },
   {
     id: 'notif-3',
@@ -47,7 +47,7 @@ const MOCK_NOTIFICATIONS: Notification[] = [
     body: '"Sunset Hiking at Twin Peaks" starts in 1 hour',
     activityId: 'act-3',
     read: true,
-    createdAt: { seconds: Date.now() / 1000 - 7200, nanoseconds: 0, toDate: () => new Date(Date.now() - 7_200_000) } as any,
+    createdAt: new Date(Date.now() - 7_200_000).toISOString(),
   },
   {
     id: 'notif-4',
@@ -57,7 +57,7 @@ const MOCK_NOTIFICATIONS: Notification[] = [
     body: '"Beach Volleyball" has reached its max participants 🎉',
     activityId: 'act-4',
     read: true,
-    createdAt: { seconds: Date.now() / 1000 - 86400, nanoseconds: 0, toDate: () => new Date(Date.now() - 86_400_000) } as any,
+    createdAt: new Date(Date.now() - 86_400_000).toISOString(),
   },
   {
     id: 'notif-5',
@@ -67,7 +67,7 @@ const MOCK_NOTIFICATIONS: Notification[] = [
     body: 'The time for "Dinner & Wine Night" has been changed to 8:00 PM',
     activityId: 'act-5',
     read: true,
-    createdAt: { seconds: Date.now() / 1000 - 172800, nanoseconds: 0, toDate: () => new Date(Date.now() - 172_800_000) } as any,
+    createdAt: new Date(Date.now() - 172_800_000).toISOString(),
   },
 ];
 
@@ -120,7 +120,7 @@ export default function NotificationsScreen() {
   }) => {
     const icon = ICON_MAP[item.type] ?? { name: 'notifications' as keyof typeof Ionicons.glyphMap, color: Colors.slate };
     const timeAgo = item.createdAt
-      ? formatDistanceToNow(new Date(item.createdAt), { addSuffix: true })
+      ? formatDistanceToNow(parseISO(item.createdAt), { addSuffix: true })
       : '';
 
     return (

@@ -19,54 +19,99 @@ function mapProfile(id: string, profile: any): User {
   };
 }
 
+async function resolveSessionUser(session: any, setUser: (user: User | null) => void) {
+  if (!session?.user) {
+    setUser(null);
+    return;
+  }
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', session.user.id)
+    .single();
+
+  if (profile) {
+    setUser(mapProfile(session.user.id, profile));
+    return;
+  }
+
+  setUser({
+    uid: session.user.id,
+    displayName: session.user.user_metadata?.display_name ?? '',
+    photoURL: session.user.user_metadata?.avatar_url ?? '',
+    bio: '',
+    ageRange: '18-24',
+    interests: [],
+    activitiesJoined: [],
+    activitiesHosted: [],
+    rating: 0,
+    ratingCount: 0,
+    createdAt: new Date().toISOString(),
+  });
+}
+
 export function useAuth() {
   const { user, isAuthenticated, isLoading, setUser, setLoading, signOut: storeSignOut } = useAuthStore();
   const [error, setError] = useState<string | null>(null);
 
   // Listen for auth state changes
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (session?.user) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
+    let isActive = true;
 
-          if (profile) {
-            setUser(mapProfile(session.user.id, profile));
-          } else {
-            // Profile will be auto-created by trigger; set minimal user
-            setUser({
-              uid: session.user.id,
-              displayName: session.user.user_metadata?.display_name ?? '',
-              photoURL: session.user.user_metadata?.avatar_url ?? '',
-              bio: '',
-              ageRange: '18-24',
-              interests: [],
-              activitiesJoined: [],
-              activitiesHosted: [],
-              rating: 0,
-              ratingCount: 0,
-              createdAt: new Date().toISOString(),
-            });
+    const syncSession = async (session: any) => {
+      try {
+        await resolveSessionUser(session, (nextUser) => {
+          if (isActive) {
+            setUser(nextUser);
           }
-        } else {
+        });
+      } catch {
+        if (isActive) {
           setUser(null);
         }
+      }
+    };
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        await syncSession(session);
       }
     );
 
     // Check for existing session on mount
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) {
-        setLoading(false);
-      }
-    });
+    supabase.auth.getSession()
+      .then(async ({ data: { session } }) => {
+        await syncSession(session);
+      })
+      .catch(() => {
+        if (isActive) {
+          setUser(null);
+        }
+      })
+      .finally(() => {
+        if (isActive) {
+          setLoading(false);
+        }
+      });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      isActive = false;
+      subscription.unsubscribe();
+    };
   }, [setUser, setLoading]);
+
+  useEffect(() => {
+    if (!isLoading) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setLoading(false);
+    }, 5000);
+
+    return () => clearTimeout(timer);
+  }, [isLoading, setLoading]);
 
   const signIn = useCallback(
     async (email: string, password: string) => {

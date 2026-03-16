@@ -108,10 +108,7 @@ export default function SignInScreen() {
           <SecondaryButton
             title="Sign in with Google"
             onPress={async () => {
-              try {
-                await signInWithGoogle();
-                router.replace('/(tabs)');
-              } catch {}
+              await signInWithGoogle();
             }}
             icon={<Text style={styles.googleIcon}>G</Text>}
           />

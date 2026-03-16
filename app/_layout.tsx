@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Stack } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -8,6 +8,8 @@ import { DMSans_400Regular, DMSans_500Medium, DMSans_700Bold } from '@expo-googl
 import * as SplashScreen from 'expo-splash-screen';
 import { queryClient } from '../lib/queryClient';
 import { StatusBar } from 'react-native';
+import { useAuth } from '../hooks/useAuth';
+import { useAuthStore } from '../store/authStore';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -18,6 +20,10 @@ export default function RootLayout() {
     DMSans_500Medium,
     DMSans_700Bold,
   });
+  useAuth();
+  const router = useRouter();
+  const segments = useSegments();
+  const { isAuthenticated, isLoading } = useAuthStore();
 
   useEffect(() => {
     if (fontsLoaded) {
@@ -25,7 +31,24 @@ export default function RootLayout() {
     }
   }, [fontsLoaded]);
 
-  if (!fontsLoaded) {
+  useEffect(() => {
+    if (!fontsLoaded || isLoading) {
+      return;
+    }
+
+    const inAuthGroup = segments[0] === '(auth)';
+
+    if (!isAuthenticated && !inAuthGroup) {
+      router.replace('/(auth)');
+      return;
+    }
+
+    if (isAuthenticated && inAuthGroup) {
+      router.replace('/(tabs)');
+    }
+  }, [fontsLoaded, isAuthenticated, isLoading, router, segments]);
+
+  if (!fontsLoaded || isLoading) {
     return null;
   }
 
