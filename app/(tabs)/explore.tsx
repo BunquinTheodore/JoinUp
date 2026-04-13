@@ -77,11 +77,19 @@ export default function ExploreScreen() {
                   onPress={() => router.push(`/activity/${activity.id}`)}
                   activeOpacity={0.92}
                 >
-                  {/* Cover image placeholder */}
+                  {/* Cover image */}
                   <View style={styles.coverImage}>
-                    <View style={styles.coverPlaceholder}>
-                      <Ionicons name="image-outline" size={40} color={Colors.slate} />
-                    </View>
+                    {activity.coverImage ? (
+                      <Image
+                        source={{ uri: activity.coverImage }}
+                        style={styles.coverPhoto}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View style={styles.coverPlaceholder}>
+                        <Ionicons name="image-outline" size={40} color={Colors.slate} />
+                      </View>
+                    )}
 
                     {/* Distance badge */}
                     <View style={styles.distanceBadge}>
@@ -179,6 +187,10 @@ const styles = StyleSheet.create({
     height: 160,
     backgroundColor: Colors.primary + '15',
     position: 'relative',
+  },
+  coverPhoto: {
+    width: '100%',
+    height: '100%',
   },
   coverPlaceholder: {
     flex: 1,

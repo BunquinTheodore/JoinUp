@@ -29,8 +29,11 @@ export default function SignInScreen() {
     if (!email.trim() || !password.trim()) return;
     try {
       await signIn(email, password);
-      router.replace('/(tabs)');
-    } catch {}
+      // signIn throws on error, so if we reach here it succeeded
+      // Router will be handled by auth state change in root layout
+    } catch (e) {
+      // Error is already set in auth hook state, UI will show it
+    }
   };
 
   return (

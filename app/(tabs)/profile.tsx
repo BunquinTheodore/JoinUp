@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   FlatList,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -159,7 +160,15 @@ export default function ProfileScreen() {
                     onPress={() => router.push(`/activity/${activity.id}`)}
                   >
                     <View style={[styles.miniCardImage, { backgroundColor: chipColor + '20' }]}>
-                      <Ionicons name="image-outline" size={24} color={chipColor} />
+                      {activity.coverImage ? (
+                        <Image
+                          source={{ uri: activity.coverImage }}
+                          style={styles.miniCardPhoto}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <Ionicons name="image-outline" size={24} color={chipColor} />
+                      )}
                     </View>
                     <Text style={styles.miniCardTitle} numberOfLines={1}>
                       {activity.title}
@@ -375,6 +384,11 @@ const styles = StyleSheet.create({
     height: 90,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  miniCardPhoto: {
+    width: '100%',
+    height: '100%',
   },
   miniCardTitle: {
     fontFamily: Typography.bodyMed,

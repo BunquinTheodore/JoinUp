@@ -53,19 +53,23 @@ export function CategoryChip({
 const styles = StyleSheet.create({
   chip: {
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
+    paddingVertical: 5,
     borderRadius: BorderRadius.pill,
     borderWidth: 1.5,
-    marginRight: Spacing.sm,
-    marginBottom: Spacing.sm,
+    marginRight: 4,
+    minHeight: 34,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   chipSm: {
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 4,
     borderRadius: BorderRadius.pill,
-    borderWidth: 1.5,
-    marginRight: 6,
-    marginBottom: 6,
+    borderWidth: 1.25,
+    marginRight: 4,
+    minHeight: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   label: {
     fontFamily: Typography.bodyMed,
@@ -73,6 +77,6 @@ const styles = StyleSheet.create({
   },
   labelSm: {
     fontFamily: Typography.bodyMed,
-    fontSize: 12,
+    fontSize: 11,
   },
 });

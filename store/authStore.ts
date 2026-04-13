@@ -6,6 +6,7 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   setUser: (user: User | null) => void;
+  updateUser: (patch: Partial<User>) => void;
   setLoading: (loading: boolean) => void;
   signOut: () => void;
 }
@@ -20,6 +21,16 @@ export const useAuthStore = create<AuthState>((set) => ({
       isAuthenticated: !!user,
       isLoading: false,
     }),
+  updateUser: (patch) =>
+    set((state) =>
+      state.user
+        ? {
+            user: { ...state.user, ...patch },
+            isAuthenticated: true,
+            isLoading: false,
+          }
+        : state
+    ),
   setLoading: (isLoading) => set({ isLoading }),
   signOut: () =>
     set({

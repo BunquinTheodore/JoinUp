@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ViewStyle } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ViewStyle, Image } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Colors, Typography, BorderRadius, Spacing, Shadows, CategoryColors } from '../../constants/theme';
 import { SlotProgressBar } from './SlotProgressBar';
@@ -13,9 +13,10 @@ interface ActivityCardProps {
   onJoin: () => void;
   style?: ViewStyle;
   index?: number;
+  isLeaving?: boolean;
 }
 
-export function ActivityCard({ activity, onPress, onJoin, style, index = 0 }: ActivityCardProps) {
+export function ActivityCard({ activity, onPress, onJoin, style, index = 0, isLeaving = false }: ActivityCardProps) {
   const slotsLeft = activity.currentSlots;
   const isFull = slotsLeft <= 0;
   const chipColor = CategoryColors[activity.category] ?? Colors.accent;
@@ -27,10 +28,19 @@ export function ActivityCard({ activity, onPress, onJoin, style, index = 0 }: Ac
   return (
     <Animated.View entering={FadeInDown.delay(index * 50).springify()}>
       <TouchableOpacity
-        style={[styles.card, Shadows.card, style]}
+        style={[styles.card, Shadows.card, style, isLeaving && styles.cardLeaving]}
         onPress={onPress}
         activeOpacity={0.92}
+        disabled={isLeaving}
       >
+        {activity.coverImage ? (
+          <Image
+            source={{ uri: activity.coverImage }}
+            style={styles.coverPhoto}
+            resizeMode="cover"
+          />
+        ) : null}
+
         {/* Category chip + slots badge */}
         <View style={styles.topRow}>
           <View style={[styles.categoryChip, { backgroundColor: chipColor + '18', borderColor: chipColor }]}>
@@ -64,11 +74,11 @@ export function ActivityCard({ activity, onPress, onJoin, style, index = 0 }: Ac
             e.stopPropagation?.();
             onJoin();
           }}
-          disabled={isFull}
+          disabled={isFull || isLeaving}
           activeOpacity={0.8}
         >
           <Text style={styles.joinBtnText}>
-            {isFull ? 'Full' : 'Join →'}
+            {isLeaving ? 'Joining…' : isFull ? 'Full' : 'Join →'}
           </Text>
         </TouchableOpacity>
       </TouchableOpacity>
@@ -83,6 +93,16 @@ const styles = StyleSheet.create({
     padding: Spacing.md,
     marginBottom: Spacing.md,
     marginHorizontal: Spacing.md,
+  },
+  cardLeaving: {
+    transform: [{ translateX: 12 }],
+  },
+  coverPhoto: {
+    width: '100%',
+    height: 130,
+    borderRadius: BorderRadius.input,
+    marginBottom: Spacing.sm,
+    backgroundColor: Colors.primary + '10',
   },
   topRow: {
     flexDirection: 'row',

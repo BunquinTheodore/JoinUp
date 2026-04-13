@@ -1,3 +1,10 @@
 {
-    "robotcode.disableExtension": true
+    "robotcode.disableExtension": true,
+    "idl.problems.reportProblems": false,
+    "idl.problems.excludeProblemsForPath": [
+        "file:///c:/Joiners/node_modules"
+    ],
+    "files.associations": {
+        "**/node_modules/**/*.pro": "plaintext"
+    }
 }

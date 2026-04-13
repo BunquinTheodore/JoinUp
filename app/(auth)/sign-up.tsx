@@ -24,7 +24,7 @@ const INTEREST_OPTIONS = ['Fitness', 'Study', 'Outdoors', 'Gaming', 'Café', 'Mu
 export default function SignUpScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { signUp, isLoading } = useAuth();
+  const { signUp, isLoading, error } = useAuth();
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -33,6 +33,7 @@ export default function SignUpScreen() {
   const [interests, setInterests] = useState<string[]>([]);
   const [showAgeDropdown, setShowAgeDropdown] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
   const toggleInterest = (interest: string) => {
     setInterests((prev) =>
@@ -59,8 +60,16 @@ export default function SignUpScreen() {
 
   const handleSubmit = async () => {
     if (!validate()) return;
+    setInfoMessage(null);
+
     try {
-      await signUp({ fullName, email, password, ageRange, interests });
+      const result = await signUp({ fullName, email, password, ageRange, interests });
+
+      if (result.requiresEmailConfirmation) {
+        setInfoMessage('Account created. Please check your email and verify your account before signing in.');
+        return;
+      }
+
       router.replace('/(tabs)');
     } catch {}
   };
@@ -87,6 +96,18 @@ export default function SignUpScreen() {
           <Text style={styles.heading}>Create Account</Text>
           <Text style={styles.subtitle}>Join the community and start connecting</Text>
         </Animated.View>
+
+        {error && (
+          <Animated.View entering={FadeInDown.springify()} style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>{error}</Text>
+          </Animated.View>
+        )}
+
+        {infoMessage && (
+          <Animated.View entering={FadeInDown.springify()} style={styles.infoBanner}>
+            <Text style={styles.infoBannerText}>{infoMessage}</Text>
+          </Animated.View>
+        )}
 
         <Animated.View entering={FadeInDown.delay(200).springify()}>
           <InputField
@@ -226,6 +247,28 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.slate,
     marginBottom: Spacing.lg,
+  },
+  errorBanner: {
+    backgroundColor: Colors.danger + '15',
+    borderRadius: 8,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  errorBannerText: {
+    fontFamily: Typography.body,
+    fontSize: 14,
+    color: Colors.danger,
+  },
+  infoBanner: {
+    backgroundColor: Colors.accent + '15',
+    borderRadius: 8,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  infoBannerText: {
+    fontFamily: Typography.body,
+    fontSize: 14,
+    color: Colors.accent,
   },
   fieldLabel: {
     fontFamily: Typography.bodyMed,

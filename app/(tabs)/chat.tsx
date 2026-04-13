@@ -13,15 +13,17 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Colors, Typography, Spacing, BorderRadius, Shadows, CategoryColors } from '../../constants/theme';
 import { useActivities } from '../../hooks/useActivities';
 import { EmptyState } from '../../components/ui/EmptyState';
+import { useAuthStore } from '../../store/authStore';
+import { getMockChatPreview } from '../../lib/mockChats';
 
 export default function ChatListScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { activities, isLoading } = useActivities();
+  const user = useAuthStore((state) => state.user);
 
-  // Show chats for activities user is part of
-  const chatActivities = activities.filter((a) =>
-    a.participants.includes('user-1')
+  const chatActivities = activities.filter((activity) =>
+    activity.participants.includes(user?.uid ?? '')
   );
 
   return (
@@ -42,6 +44,7 @@ export default function ChatListScreen() {
           keyExtractor={(item) => item.id}
           renderItem={({ item, index }) => {
             const chipColor = CategoryColors[item.category] ?? Colors.accent;
+            const preview = getMockChatPreview(item.id);
             return (
               <Animated.View entering={FadeInDown.delay(index * 50).springify()}>
                 <TouchableOpacity
@@ -57,7 +60,9 @@ export default function ChatListScreen() {
                       {item.title}
                     </Text>
                     <Text style={styles.chatSubtitle} numberOfLines={1}>
-                      {item.participants.length} participants
+                      {preview
+                        ? `${preview.senderName}: ${preview.text}`
+                        : `${item.participants.length} participants`}
                     </Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={Colors.slate} />

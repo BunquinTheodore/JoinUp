@@ -16,10 +16,14 @@ create table if not exists public.profiles (
   age_range     text not null default '18-24'
                   check (age_range in ('18-24','25-30','31-40','40+')),
   interests     text[] not null default '{}',
+  activities_joined text[] not null default '{}',
   rating        numeric(3,2) not null default 0,
   rating_count  int not null default 0,
   created_at    timestamptz not null default now()
 );
+
+alter table public.profiles
+  add column if not exists activities_joined text[] not null default '{}';
 
 alter table public.profiles enable row level security;
 
@@ -279,12 +283,26 @@ returns trigger
 language plpgsql
 security definer set search_path = ''
 as $$
+declare
+  interests_array text[];
 begin
-  insert into public.profiles (id, display_name, photo_url)
+  -- Parse interests from JSON string if provided
+  interests_array := ARRAY[]::text[];
+  if new.raw_user_meta_data ->> 'interests' is not null then
+    begin
+      interests_array := array(select jsonb_array_elements_text((new.raw_user_meta_data -> 'interests')));
+    exception when others then
+      interests_array := ARRAY[]::text[];
+    end;
+  end if;
+
+  insert into public.profiles (id, display_name, photo_url, age_range, interests)
   values (
     new.id,
     coalesce(new.raw_user_meta_data ->> 'display_name', ''),
-    coalesce(new.raw_user_meta_data ->> 'avatar_url', '')
+    coalesce(new.raw_user_meta_data ->> 'avatar_url', ''),
+    coalesce(new.raw_user_meta_data ->> 'age_range', '18-24'),
+    interests_array
   );
   return new;
 end;

@@ -11,7 +11,7 @@ function mapProfile(id: string, profile: any): User {
     bio: profile.bio ?? '',
     ageRange: profile.age_range ?? '18-24',
     interests: profile.interests ?? [],
-    activitiesJoined: [],
+    activitiesJoined: profile.activities_joined ?? [],
     activitiesHosted: [],
     rating: Number(profile.rating ?? 0),
     ratingCount: profile.rating_count ?? 0,
@@ -29,7 +29,7 @@ async function resolveSessionUser(session: any, setUser: (user: User | null) => 
     .from('profiles')
     .select('*')
     .eq('id', session.user.id)
-    .single();
+    .maybeSingle();
 
   if (profile) {
     setUser(mapProfile(session.user.id, profile));
@@ -118,19 +118,26 @@ export function useAuth() {
       try {
         setLoading(true);
         setError(null);
-        const { error: authError } = await supabase.auth.signInWithPassword({
-          email,
+        const normalizedEmail = email.trim().toLowerCase();
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
           password,
         });
         if (authError) throw authError;
+
+        await resolveSessionUser(authData.session, setUser);
       } catch (err: any) {
-        setError(err.message ?? 'Failed to sign in. Please check your credentials.');
+        if (err?.message?.toLowerCase?.().includes('email not confirmed')) {
+          setError('Please verify your email first, then sign in.');
+        } else {
+          setError(err.message ?? 'Failed to sign in. Please check your credentials.');
+        }
         throw err;
       } finally {
         setLoading(false);
       }
     },
-    [setLoading]
+    [setLoading, setUser]
   );
 
   const signUp = useCallback(
@@ -140,42 +147,46 @@ export function useAuth() {
       password: string;
       ageRange: string;
       interests: string[];
-    }) => {
+    }): Promise<{ requiresEmailConfirmation: boolean }> => {
       try {
         setLoading(true);
         setError(null);
+        const normalizedEmail = data.email.trim().toLowerCase();
         const { data: authData, error: authError } = await supabase.auth.signUp({
-          email: data.email,
+          email: normalizedEmail,
           password: data.password,
           options: {
             data: {
               display_name: data.fullName,
+              age_range: data.ageRange,
+              interests: JSON.stringify(data.interests),
             },
           },
         });
         if (authError) throw authError;
 
-        // Update profile with extra fields (trigger creates the row)
-        if (authData.user) {
-          // Small delay to let the trigger create the profile row
+        // If we have a session immediately, user is logged in and profile trigger has fired
+        if (authData.session) {
+          // Small delay to ensure trigger has completed
           await new Promise((r) => setTimeout(r, 500));
-          await supabase
-            .from('profiles')
-            .update({
-              display_name: data.fullName,
-              age_range: data.ageRange,
-              interests: data.interests,
-            })
-            .eq('id', authData.user.id);
+          await resolveSessionUser(authData.session, setUser);
+          return { requiresEmailConfirmation: false };
         }
+
+        // No session yet (email confirmation required) — don't try to write to profiles
+        // The database trigger will create profile row when auth.users is created
+        // We'll update with interests later once user confirms email and logs in
+        setUser(null);
+        return { requiresEmailConfirmation: true };
       } catch (err: any) {
+        console.error('Sign up error:', err);
         setError(err.message ?? 'Failed to create account. Please try again.');
         throw err;
       } finally {
         setLoading(false);
       }
     },
-    [setLoading]
+    [setLoading, setUser]
   );
 
   const signInWithGoogle = useCallback(async () => {

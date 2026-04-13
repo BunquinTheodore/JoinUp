@@ -13,6 +13,7 @@ import {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import Animated, { SlideOutLeft } from 'react-native-reanimated';
 import { Colors, Typography, Spacing, BorderRadius, Categories } from '../../constants/theme';
 import { ActivityCard } from '../../components/ui/ActivityCard';
 import { CategoryChip } from '../../components/ui/CategoryChip';
@@ -29,6 +30,7 @@ export default function HomeFeedScreen() {
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [fadingActivityIds, setFadingActivityIds] = useState<string[]>([]);
 
   const filteredActivities = useMemo(() => {
     let filtered = activities;
@@ -43,8 +45,16 @@ export default function HomeFeedScreen() {
           a.location.name.toLowerCase().includes(q)
       );
     }
+
+    if (user?.activitiesJoined?.length) {
+      const joinedIds = new Set(user.activitiesJoined);
+      filtered = filtered.filter(
+        (activity) => !joinedIds.has(activity.id) || fadingActivityIds.includes(activity.id)
+      );
+    }
+
     return filtered;
-  }, [activities, selectedCategory, searchQuery]);
+  }, [activities, fadingActivityIds, searchQuery, selectedCategory, user?.activitiesJoined]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -92,6 +102,7 @@ export default function HomeFeedScreen() {
       {/* Category chips */}
       <ScrollView
         horizontal
+        style={styles.chipsScroll}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.chipsContainer}
       >
@@ -119,39 +130,62 @@ export default function HomeFeedScreen() {
       </View>
 
       {/* Activity Feed */}
-      {isLoading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={Colors.accent} />
-        </View>
-      ) : filteredActivities.length === 0 ? (
-        <EmptyState
-          icon="calendar-outline"
-          title="No activities found"
-          message="Try changing your filters or check back later for new activities."
-        />
-      ) : (
-        <FlatList
-          data={filteredActivities}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item, index }) => (
-            <ActivityCard
-              activity={item}
-              index={index}
-              onPress={() => router.push(`/activity/${item.id}`)}
-              onJoin={() => joinActivity(item.id, user?.uid ?? '')}
-            />
-          )}
-          contentContainerStyle={styles.feedContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={Colors.accent}
-            />
-          }
-        />
-      )}
+      <View style={styles.feedContainer}>
+        {isLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={Colors.accent} />
+          </View>
+        ) : filteredActivities.length === 0 ? (
+          <EmptyState
+            icon="calendar-outline"
+            title="No activities found"
+            message="Try changing your filters or check back later for new activities."
+          />
+        ) : (
+          <FlatList
+            style={styles.feedList}
+            data={filteredActivities}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item, index }) => (
+              <Animated.View exiting={SlideOutLeft.duration(220)}>
+                <ActivityCard
+                  activity={item}
+                  index={index}
+                  isLeaving={fadingActivityIds.includes(item.id)}
+                  onPress={() => router.push(`/activity/${item.id}`)}
+                  onJoin={async () => {
+                    if (!user?.uid || fadingActivityIds.includes(item.id)) return;
+
+                    setFadingActivityIds((prev) => [...prev, item.id]);
+                    const joined = await joinActivity(item.id, user.uid);
+
+                    if (!joined) {
+                      setFadingActivityIds((prev) => prev.filter((activityId) => activityId !== item.id));
+                      return;
+                    }
+
+                    setTimeout(() => {
+                      setFadingActivityIds((prev) => prev.filter((activityId) => activityId !== item.id));
+                    }, 220);
+                  }}
+                />
+              </Animated.View>
+            )}
+            contentContainerStyle={[
+              styles.feedContent,
+              { paddingBottom: insets.bottom + Spacing.xl * 2 },
+            ]}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={Colors.accent}
+              />
+            }
+          />
+        )}
+      </View>
     </View>
   );
 }
@@ -203,17 +237,22 @@ const styles = StyleSheet.create({
   },
   greetingContainer: {
     paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.sm,
-    paddingBottom: Spacing.sm,
+    paddingTop: 2,
+    paddingBottom: 0,
   },
   greeting: {
     fontFamily: Typography.bodyBold,
     fontSize: 20,
     color: Colors.text,
   },
+  chipsScroll: {
+    maxHeight: 40,
+  },
   chipsContainer: {
-    paddingHorizontal: Spacing.md,
-    paddingBottom: Spacing.sm,
+    paddingHorizontal: 10,
+    paddingTop: 0,
+    paddingBottom: 0,
+    alignItems: 'center',
   },
   searchContainer: {
     flexDirection: 'row',
@@ -226,6 +265,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderWidth: 1,
     borderColor: Colors.divider,
+    zIndex: 2,
   },
   searchInput: {
     flex: 1,
@@ -239,6 +279,14 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  feedContainer: {
+    flex: 1,
+    position: 'relative',
+    zIndex: 1,
+  },
+  feedList: {
+    flex: 1,
   },
   feedContent: {
     paddingBottom: Spacing.xl,

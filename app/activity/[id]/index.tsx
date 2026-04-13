@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Image,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -107,9 +108,17 @@ export default function ActivityDetailScreen() {
         {/* Cover image */}
         <Animated.View entering={FadeInDown.delay(100).springify()}>
           <View style={styles.coverImage}>
-            <View style={styles.coverPlaceholder}>
-              <Ionicons name="image-outline" size={48} color={Colors.slate} />
-            </View>
+            {activity.coverImage ? (
+              <Image
+                source={{ uri: activity.coverImage }}
+                style={styles.coverPhoto}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={styles.coverPlaceholder}>
+                <Ionicons name="image-outline" size={48} color={Colors.slate} />
+              </View>
+            )}
           </View>
         </Animated.View>
 
@@ -278,6 +287,10 @@ const styles = StyleSheet.create({
     marginHorizontal: Spacing.md,
     borderRadius: BorderRadius.card,
     overflow: 'hidden',
+  },
+  coverPhoto: {
+    width: '100%',
+    height: '100%',
   },
   coverPlaceholder: {
     flex: 1,

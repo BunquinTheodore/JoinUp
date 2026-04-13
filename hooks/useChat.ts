@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Message } from '../types';
+import { getMockChatMessages } from '../lib/mockChats';
 
 function mapMessage(row: any): Message {
   return {
@@ -23,24 +24,44 @@ function mapMessage(row: any): Message {
 export function useChat(activityId: string) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const isMockThread = activityId.startsWith('mock-');
 
   useEffect(() => {
-    const fetchMessages = async () => {
-      const { data, error } = await supabase
-        .from('messages_full')
-        .select('*')
-        .eq('activity_id', activityId)
-        .order('created_at', { ascending: true });
+    let isActive = true;
 
-      if (!error && data) {
-        setMessages(data.map(mapMessage));
+    const fetchMessages = async () => {
+      try {
+        if (isMockThread) {
+          if (isActive) {
+            setMessages(getMockChatMessages(activityId));
+          }
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from('messages_full')
+          .select('*')
+          .eq('activity_id', activityId)
+          .order('created_at', { ascending: true });
+
+        if (!error && data && isActive) {
+          setMessages(data.map(mapMessage));
+        }
+      } finally {
+        if (isActive) {
+          setIsLoading(false);
+        }
       }
-      setIsLoading(false);
     };
 
     fetchMessages();
 
-    // Subscribe to new messages in realtime
+    if (isMockThread) {
+      return () => {
+        isActive = false;
+      };
+    }
+
     const channel = supabase
       .channel(`chat:${activityId}`)
       .on(
@@ -51,7 +72,7 @@ export function useChat(activityId: string) {
           table: 'messages',
           filter: `activity_id=eq.${activityId}`,
         },
-        async (payload) => {
+        async (payload: any) => {
           const { data } = await supabase
             .from('messages_full')
             .select('*')
@@ -60,7 +81,7 @@ export function useChat(activityId: string) {
 
           if (data) {
             setMessages((prev) => {
-              if (prev.some((m) => m.id === data.id)) return prev;
+              if (prev.some((message) => message.id === data.id)) return prev;
               return [...prev, mapMessage(data)];
             });
           }
@@ -69,12 +90,30 @@ export function useChat(activityId: string) {
       .subscribe();
 
     return () => {
+      isActive = false;
       supabase.removeChannel(channel);
     };
-  }, [activityId]);
+  }, [activityId, isMockThread]);
 
   const sendMessage = useCallback(
     async (text: string, senderId: string, senderName: string) => {
+      if (isMockThread) {
+        const mockMessage: Message = {
+          id: `${activityId}-local-${Date.now()}`,
+          activityId,
+          senderId,
+          senderName,
+          senderPhoto: '',
+          text,
+          type: 'text',
+          isPinned: false,
+          createdAt: new Date().toISOString(),
+        };
+
+        setMessages((prev) => [...prev, mockMessage]);
+        return;
+      }
+
       const { data, error } = await supabase
         .from('messages')
         .insert({
@@ -88,7 +127,7 @@ export function useChat(activityId: string) {
 
       if (!error && data) {
         setMessages((prev) => {
-          if (prev.some((m) => m.id === data.id)) return prev;
+          if (prev.some((message) => message.id === data.id)) return prev;
           return [
             ...prev,
             mapMessage({ ...data, sender_name: senderName, sender_photo: '' }),
@@ -96,11 +135,28 @@ export function useChat(activityId: string) {
         });
       }
     },
-    [activityId]
+    [activityId, isMockThread]
   );
 
   const sendLocation = useCallback(
     async (lat: number, lng: number, senderId: string, senderName: string) => {
+      if (isMockThread) {
+        const mockMessage: Message = {
+          id: `${activityId}-local-location-${Date.now()}`,
+          activityId,
+          senderId,
+          senderName,
+          senderPhoto: '',
+          location: { lat, lng },
+          type: 'location',
+          isPinned: false,
+          createdAt: new Date().toISOString(),
+        };
+
+        setMessages((prev) => [...prev, mockMessage]);
+        return;
+      }
+
       const { data, error } = await supabase
         .from('messages')
         .insert({
@@ -115,7 +171,7 @@ export function useChat(activityId: string) {
 
       if (!error && data) {
         setMessages((prev) => {
-          if (prev.some((m) => m.id === data.id)) return prev;
+          if (prev.some((message) => message.id === data.id)) return prev;
           return [
             ...prev,
             mapMessage({ ...data, sender_name: senderName, sender_photo: '' }),
@@ -123,10 +179,10 @@ export function useChat(activityId: string) {
         });
       }
     },
-    [activityId]
+    [activityId, isMockThread]
   );
 
-  const pinnedMessage = messages.find((m) => m.isPinned) ?? null;
+  const pinnedMessage = messages.find((message) => message.isPinned) ?? null;
 
   return { messages, isLoading, sendMessage, sendLocation, pinnedMessage };
 }
