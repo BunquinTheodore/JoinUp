@@ -3,6 +3,7 @@ export interface User {
   displayName: string;
   photoURL: string;
   bio: string;
+  location: string;
   ageRange: '18-24' | '25-30' | '31-40' | '40+';
   interests: string[];
   activitiesJoined: string[];

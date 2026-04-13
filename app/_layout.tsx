@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import { Stack, usePathname, useRouter } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -22,8 +22,15 @@ export default function RootLayout() {
   });
   useAuth();
   const router = useRouter();
-  const segments = useSegments();
+  const pathname = usePathname();
   const { isAuthenticated, isLoading } = useAuthStore();
+  const [authBootstrapped, setAuthBootstrapped] = useState(false);
+
+  useEffect(() => {
+    if (!isLoading) {
+      setAuthBootstrapped(true);
+    }
+  }, [isLoading]);
 
   useEffect(() => {
     if (fontsLoaded) {
@@ -32,23 +39,37 @@ export default function RootLayout() {
   }, [fontsLoaded]);
 
   useEffect(() => {
-    if (!fontsLoaded || isLoading) {
+    if (!fontsLoaded || !authBootstrapped) {
       return;
     }
 
-    const inAuthGroup = segments[0] === '(auth)';
+    const currentPath = pathname || '/';
+    const isAuthRoute =
+      currentPath === '/' ||
+      currentPath.startsWith('/(auth)') ||
+      currentPath.startsWith('/sign-in') ||
+      currentPath.startsWith('/sign-up');
 
-    if (!isAuthenticated && !inAuthGroup) {
+    const isProtectedRoute =
+      currentPath.startsWith('/(tabs)') ||
+      currentPath.startsWith('/activity') ||
+      currentPath.startsWith('/chat') ||
+      currentPath.startsWith('/notifications') ||
+      currentPath.startsWith('/profile') ||
+      currentPath.startsWith('/explore') ||
+      currentPath.startsWith('/create');
+
+    if (!isAuthenticated && isProtectedRoute) {
       router.replace('/(auth)');
       return;
     }
 
-    if (isAuthenticated && inAuthGroup) {
+    if (isAuthenticated && isAuthRoute) {
       router.replace('/(tabs)');
     }
-  }, [fontsLoaded, isAuthenticated, isLoading, router, segments]);
+  }, [authBootstrapped, fontsLoaded, isAuthenticated, pathname, router]);
 
-  if (!fontsLoaded || isLoading) {
+  if (!fontsLoaded || !authBootstrapped) {
     return null;
   }
 

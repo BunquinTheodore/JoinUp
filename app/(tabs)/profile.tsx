@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  FlatList,
   Image,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,41 +19,187 @@ import { BottomSheet } from '../../components/ui/BottomSheet';
 import { InputField } from '../../components/ui/InputField';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { useAuthStore } from '../../store/authStore';
-import { useActivities } from '../../hooks/useActivities';
+import { supabase } from '../../lib/supabase';
 
 type ProfileTab = 'Joined' | 'Hosting' | 'Past';
+type HistoryActivity = {
+  id: string;
+  title: string;
+  category: string;
+  coverImage?: string;
+  dateTime: string;
+  locationName: string;
+  status: string;
+  hostId: string;
+};
+
+function mapHistoryActivity(row: any): HistoryActivity {
+  return {
+    id: row.id,
+    title: row.title,
+    category: row.category,
+    coverImage: row.cover_image ?? undefined,
+    dateTime: row.date_time,
+    locationName: row.location_name ?? '',
+    status: row.status ?? 'active',
+    hostId: row.host_id,
+  };
+}
+
+function dedupeById(items: HistoryActivity[]) {
+  return Array.from(new Map(items.map((item) => [item.id, item])).values());
+}
 
 export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
-  const { activities } = useActivities();
+  const updateUser = useAuthStore((s) => s.updateUser);
+
   const [activeTab, setActiveTab] = useState<ProfileTab>('Joined');
   const [showEditSheet, setShowEditSheet] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [editName, setEditName] = useState(user?.displayName ?? '');
+  const [editLocation, setEditLocation] = useState(user?.location ?? '');
+  const [editBio, setEditBio] = useState(user?.bio ?? '');
+  const [joinedActivities, setJoinedActivities] = useState<HistoryActivity[]>([]);
+  const [hostedActivities, setHostedActivities] = useState<HistoryActivity[]>([]);
+  const [pastActivities, setPastActivities] = useState<HistoryActivity[]>([]);
 
-  const joinedActivities = activities.filter(
-    (a) => a.participants.includes(user?.uid ?? '') && a.hostId !== user?.uid
-  );
-  const hostedActivities = activities.filter(
-    (a) => a.hostId === user?.uid
-  );
-  const pastActivities = activities.filter(
-    (a) => a.status === 'completed'
-  );
+  useEffect(() => {
+    setEditName(user?.displayName ?? '');
+    setEditLocation(user?.location ?? '');
+    setEditBio(user?.bio ?? '');
+  }, [user?.bio, user?.displayName, user?.location]);
 
-  const getTabActivities = () => {
-    switch (activeTab) {
-      case 'Joined': return joinedActivities;
-      case 'Hosting': return hostedActivities;
-      case 'Past': return pastActivities;
+  const fetchHistory = useCallback(async () => {
+    if (!user?.uid) return;
+
+    try {
+      setHistoryLoading(true);
+      setHistoryError(null);
+
+      const now = new Date().toISOString();
+      const { data: joinedRows, error: joinedError } = await supabase
+        .from('participants')
+        .select('activity_id')
+        .eq('user_id', user.uid)
+        .eq('status', 'joined');
+
+      if (joinedError) throw joinedError;
+
+      const joinedIds = (joinedRows ?? []).map((row: any) => row.activity_id);
+
+      let joinedActivitiesRaw: HistoryActivity[] = [];
+      if (joinedIds.length > 0) {
+        const { data: joinedActivitiesData, error: joinedActivitiesError } = await supabase
+          .from('activities')
+          .select('id, title, category, cover_image, date_time, location_name, status, host_id')
+          .in('id', joinedIds)
+          .order('date_time', { ascending: true });
+
+        if (joinedActivitiesError) throw joinedActivitiesError;
+        joinedActivitiesRaw = (joinedActivitiesData ?? []).map(mapHistoryActivity);
+      }
+
+      const { data: hostedData, error: hostedError } = await supabase
+        .from('activities')
+        .select('id, title, category, cover_image, date_time, location_name, status, host_id')
+        .eq('host_id', user.uid)
+        .order('date_time', { ascending: true });
+
+      if (hostedError) throw hostedError;
+
+      const hostedRaw = (hostedData ?? []).map(mapHistoryActivity);
+
+      const joinedUpcoming = joinedActivitiesRaw.filter(
+        (activity) => activity.hostId !== user.uid && activity.status === 'active' && activity.dateTime >= now
+      );
+      const hostedUpcoming = hostedRaw.filter(
+        (activity) => activity.status === 'active' && activity.dateTime >= now
+      );
+      const past = dedupeById([
+        ...joinedActivitiesRaw.filter((activity) => activity.status !== 'active' || activity.dateTime < now),
+        ...hostedRaw.filter((activity) => activity.status !== 'active' || activity.dateTime < now),
+      ]).sort(
+        (left, right) => new Date(right.dateTime).getTime() - new Date(left.dateTime).getTime()
+      );
+
+      setJoinedActivities(joinedUpcoming);
+      setHostedActivities(hostedUpcoming);
+      setPastActivities(past);
+    } catch (error: any) {
+      setHistoryError(error.message ?? 'Failed to load profile activity history.');
+    } finally {
+      setHistoryLoading(false);
     }
-  };
+  }, [user?.uid]);
 
-  const stats = [
-    { label: 'Joined', value: user?.activitiesJoined?.length ?? 0 },
-    { label: 'Hosted', value: user?.activitiesHosted?.length ?? 0 },
-    { label: 'Rating', value: user?.rating?.toFixed(1) ?? '0.0' },
-  ];
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
+
+  const handleSaveProfile = useCallback(async () => {
+    if (!user?.uid) return;
+    const nextName = editName.trim();
+    const nextLocation = editLocation.trim();
+    const nextBio = editBio.trim();
+
+    if (!nextName) {
+      Alert.alert('Missing name', 'Display name is required.');
+      return;
+    }
+
+    try {
+      setSaveLoading(true);
+
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          display_name: nextName,
+          location: nextLocation,
+          bio: nextBio,
+        })
+        .eq('id', user.uid);
+
+      if (error) throw error;
+
+      updateUser({
+        displayName: nextName,
+        location: nextLocation,
+        bio: nextBio,
+      });
+
+      setShowEditSheet(false);
+      Alert.alert('Saved', 'Profile updated successfully.');
+    } catch (error: any) {
+      Alert.alert('Save failed', error.message ?? 'Could not save your profile.');
+    } finally {
+      setSaveLoading(false);
+    }
+  }, [editBio, editLocation, editName, updateUser, user?.uid]);
+
+  const getTabActivities = useCallback(() => {
+    switch (activeTab) {
+      case 'Joined':
+        return joinedActivities;
+      case 'Hosting':
+        return hostedActivities;
+      case 'Past':
+        return pastActivities;
+    }
+  }, [activeTab, hostedActivities, joinedActivities, pastActivities]);
+
+  const stats = useMemo(
+    () => [
+      { label: 'Joined', value: joinedActivities.length },
+      { label: 'Hosted', value: hostedActivities.length },
+      { label: 'Rating', value: user?.rating?.toFixed(1) ?? '0.0' },
+    ],
+    [hostedActivities.length, joinedActivities.length, user?.rating]
+  );
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -78,7 +225,7 @@ export default function ProfileScreen() {
           <Text style={styles.displayName}>
             {user?.displayName ?? 'User'}
           </Text>
-          <Text style={styles.location}>San Francisco, CA</Text>
+          <Text style={styles.location}>{user?.location || 'No location set'}</Text>
           <TouchableOpacity
             style={styles.editBtn}
             onPress={() => setShowEditSheet(true)}
@@ -143,13 +290,25 @@ export default function ProfileScreen() {
 
         {/* Activity list */}
         <View style={styles.activitiesSection}>
-          {getTabActivities().length === 0 ? (
+          {historyLoading ? (
+            <View style={styles.loadingWrap}>
+              <ActivityIndicator color={Colors.accent} size="small" />
+              <Text style={styles.loadingText}>Loading your activity history...</Text>
+            </View>
+          ) : historyError ? (
+            <View style={styles.loadingWrap}>
+              <Text style={styles.errorText}>{historyError}</Text>
+              <TouchableOpacity onPress={fetchHistory} style={styles.retryBtn}>
+                <Text style={styles.retryBtnText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : getTabActivities().length === 0 ? (
             <Text style={styles.emptyText}>
               No {activeTab.toLowerCase()} activities yet.
             </Text>
           ) : (
             getTabActivities().map((activity, index) => {
-              const chipColor = CategoryColors[activity.category] ?? Colors.accent;
+              const chipColor = CategoryColors[activity.category as keyof typeof CategoryColors] ?? Colors.accent;
               return (
                 <Animated.View
                   key={activity.id}
@@ -173,6 +332,9 @@ export default function ProfileScreen() {
                     <Text style={styles.miniCardTitle} numberOfLines={1}>
                       {activity.title}
                     </Text>
+                    <Text style={styles.miniCardMeta} numberOfLines={1}>
+                      {activity.locationName}
+                    </Text>
                   </TouchableOpacity>
                 </Animated.View>
               );
@@ -185,42 +347,42 @@ export default function ProfileScreen() {
       <BottomSheet
         visible={showEditSheet}
         onClose={() => setShowEditSheet(false)}
-        snapPoints={[500]}
+        snapPoints={[520]}
       >
-        <Text style={styles.sheetTitle}>Edit Profile</Text>
-        <InputField
-          label="Display Name"
-          value={user?.displayName ?? ''}
-          onChangeText={() => {}}
-          placeholder="Your name"
-        />
-        <InputField
-          label="Bio"
-          value={user?.bio ?? ''}
-          onChangeText={() => {}}
-          placeholder="About you"
-          multiline
-          numberOfLines={3}
-        />
-        <Text style={styles.fieldLabel}>Interests</Text>
-        <View style={styles.chipsRow}>
-          {['Fitness', 'Study', 'Outdoors', 'Gaming', 'Café', 'Music', 'Food', 'Social'].map(
-            (interest) => (
-              <CategoryChip
-                key={interest}
-                label={interest}
-                selected={user?.interests?.includes(interest) ?? false}
-                onPress={() => {}}
-                size="sm"
-              />
-            )
-          )}
-        </View>
-        <PrimaryButton
-          title="Save Changes"
-          onPress={() => setShowEditSheet(false)}
-          style={{ marginTop: Spacing.md }}
-        />
+        <ScrollView
+          style={styles.sheetScroll}
+          contentContainerStyle={styles.sheetContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={styles.sheetTitle}>Edit Profile</Text>
+          <InputField
+            label="Display Name"
+            value={editName}
+            onChangeText={setEditName}
+            placeholder="Your name"
+          />
+          <InputField
+            label="Location"
+            value={editLocation}
+            onChangeText={setEditLocation}
+            placeholder="City, Country"
+          />
+          <InputField
+            label="Bio"
+            value={editBio}
+            onChangeText={setEditBio}
+            placeholder="About you"
+            multiline
+            numberOfLines={4}
+          />
+          <PrimaryButton
+            title="Save Changes"
+            onPress={handleSaveProfile}
+            loading={saveLoading}
+            style={styles.sheetSaveBtn}
+          />
+        </ScrollView>
       </BottomSheet>
     </View>
   );
@@ -394,7 +556,15 @@ const styles = StyleSheet.create({
     fontFamily: Typography.bodyMed,
     fontSize: 13,
     color: Colors.text,
-    padding: Spacing.sm,
+    paddingTop: Spacing.sm,
+    paddingHorizontal: Spacing.sm,
+  },
+  miniCardMeta: {
+    fontFamily: Typography.body,
+    fontSize: 12,
+    color: Colors.slate,
+    paddingHorizontal: Spacing.sm,
+    paddingBottom: Spacing.sm,
   },
   sheetTitle: {
     fontFamily: Typography.display,
@@ -402,10 +572,49 @@ const styles = StyleSheet.create({
     color: Colors.text,
     marginBottom: Spacing.md,
   },
+  sheetScroll: {
+    flex: 1,
+  },
+  sheetContent: {
+    paddingBottom: Spacing.xl,
+  },
+  sheetSaveBtn: {
+    marginTop: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
   fieldLabel: {
     fontFamily: Typography.bodyMed,
     fontSize: 14,
     color: Colors.text,
     marginBottom: Spacing.sm,
+  },
+  loadingWrap: {
+    width: '100%',
+    alignItems: 'center',
+    paddingVertical: Spacing.xl,
+    gap: Spacing.sm,
+  },
+  loadingText: {
+    fontFamily: Typography.body,
+    fontSize: 14,
+    color: Colors.slate,
+  },
+  errorText: {
+    fontFamily: Typography.body,
+    fontSize: 14,
+    color: Colors.error,
+    textAlign: 'center',
+  },
+  retryBtn: {
+    marginTop: Spacing.xs,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.pill,
+    borderWidth: 1,
+    borderColor: Colors.accent,
+  },
+  retryBtnText: {
+    fontFamily: Typography.bodyMed,
+    color: Colors.accent,
   },
 });
