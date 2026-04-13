@@ -11,6 +11,7 @@ function mapMessage(row: any): Message {
     senderName: row.sender_name ?? '',
     senderPhoto: row.sender_photo ?? '',
     text: row.text ?? undefined,
+    imageUrl: row.image_url ?? undefined,
     location:
       row.location_lat != null && row.location_lng != null
         ? { lat: row.location_lat, lng: row.location_lng }
@@ -138,6 +139,49 @@ export function useChat(activityId: string) {
     [activityId, isMockThread]
   );
 
+  const sendImage = useCallback(
+    async (imageUrl: string, senderId: string, senderName: string) => {
+      if (isMockThread) {
+        const mockMessage: Message = {
+          id: `${activityId}-local-image-${Date.now()}`,
+          activityId,
+          senderId,
+          senderName,
+          senderPhoto: '',
+          imageUrl,
+          type: 'image',
+          isPinned: false,
+          createdAt: new Date().toISOString(),
+        };
+
+        setMessages((prev) => [...prev, mockMessage]);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('messages')
+        .insert({
+          activity_id: activityId,
+          sender_id: senderId,
+          image_url: imageUrl,
+          type: 'image',
+        })
+        .select()
+        .single();
+
+      if (!error && data) {
+        setMessages((prev) => {
+          if (prev.some((message) => message.id === data.id)) return prev;
+          return [
+            ...prev,
+            mapMessage({ ...data, sender_name: senderName, sender_photo: '' }),
+          ];
+        });
+      }
+    },
+    [activityId, isMockThread]
+  );
+
   const sendLocation = useCallback(
     async (lat: number, lng: number, senderId: string, senderName: string) => {
       if (isMockThread) {
@@ -184,5 +228,5 @@ export function useChat(activityId: string) {
 
   const pinnedMessage = messages.find((message) => message.isPinned) ?? null;
 
-  return { messages, isLoading, sendMessage, sendLocation, pinnedMessage };
+  return { messages, isLoading, sendMessage, sendImage, sendLocation, pinnedMessage };
 }

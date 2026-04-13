@@ -9,17 +9,23 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Alert,
+  Image,
+  Linking,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeIn } from 'react-native-reanimated';
+import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { format } from 'date-fns';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
 import { NavBar } from '../../components/layout/NavBar';
 import { useChat } from '../../hooks/useChat';
 import { useActivities } from '../../hooks/useActivities';
 import { useAuthStore } from '../../store/authStore';
+import { supabase } from '../../lib/supabase';
 import type { Message } from '../../types';
 
 export default function GroupChatScreen() {
@@ -28,9 +34,11 @@ export default function GroupChatScreen() {
   const insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
   const { activities } = useActivities();
-  const { messages, isLoading, sendMessage, pinnedMessage } = useChat(id ?? '');
+  const { messages, isLoading, sendMessage, sendImage, sendLocation, pinnedMessage } = useChat(id ?? '');
 
   const [inputText, setInputText] = useState('');
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [isSharingLocation, setIsSharingLocation] = useState(false);
   const flatListRef = useRef<FlatList<Message>>(null);
 
   const activity = useMemo(
@@ -54,6 +62,81 @@ export default function GroupChatScreen() {
     await sendMessage(text, user.uid, user.displayName);
   };
 
+  const uploadChatImage = async (uri: string) => {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    const extension = (uri.split('.').pop() ?? 'jpg').split('?')[0];
+    const objectPath = `${id}/${user?.uid ?? 'anon'}-${Date.now()}.${extension}`;
+
+    const { error } = await supabase.storage
+      .from('chat-images')
+      .upload(objectPath, blob, {
+        upsert: false,
+        contentType: blob.type || 'image/jpeg',
+      });
+
+    if (error) throw error;
+    return supabase.storage.from('chat-images').getPublicUrl(objectPath).data.publicUrl;
+  };
+
+  const handleAttachPhoto = async () => {
+    if (!user) return;
+
+    try {
+      setIsUploadingImage(true);
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (!permission.granted) {
+        Alert.alert('Permission needed', 'Allow photo library access to attach images.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        quality: 0.85,
+      });
+
+      if (result.canceled || !result.assets?.[0]?.uri) return;
+
+      const publicUrl = await uploadChatImage(result.assets[0].uri);
+      await sendImage(publicUrl, user.uid, user.displayName);
+    } catch (error) {
+      Alert.alert('Upload failed', 'Could not attach this photo. Please try again.');
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
+  const handleShareLocation = async () => {
+    if (!user) return;
+
+    try {
+      setIsSharingLocation(true);
+      const permission = await Location.requestForegroundPermissionsAsync();
+
+      if (permission.status !== 'granted') {
+        Alert.alert('Permission needed', 'Allow location access to share your location.');
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      await sendLocation(
+        position.coords.latitude,
+        position.coords.longitude,
+        user.uid,
+        user.displayName
+      );
+    } catch (error) {
+      Alert.alert('Location unavailable', 'Could not get your current location.');
+    } finally {
+      setIsSharingLocation(false);
+    }
+  };
+
   const renderMessage = ({ item }: { item: Message }) => {
     const isMe = item.senderId === user?.uid;
     const isSystem = item.type === 'system';
@@ -70,13 +153,40 @@ export default function GroupChatScreen() {
     }
 
     if (item.type === 'location') {
+      const locationLabel =
+        item.location
+          ? `${item.location.lat.toFixed(4)}, ${item.location.lng.toFixed(4)}`
+          : 'Shared location';
+
+      const handleOpenMap = () => {
+        if (!item.location) return;
+        const mapUrl = `https://www.google.com/maps/search/?api=1&query=${item.location.lat},${item.location.lng}`;
+        void Linking.openURL(mapUrl);
+      };
+
+      return (
+        <View style={[styles.bubbleRow, isMe ? styles.bubbleRowRight : styles.bubbleRowLeft]}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={handleOpenMap}
+            style={[styles.bubble, isMe ? styles.bubbleSent : styles.bubbleReceived]}
+          >
+            <Ionicons name="location" size={18} color={isMe ? Colors.white : Colors.accent} />
+            <Text style={[styles.bubbleText, isMe && styles.bubbleTextSent]}>
+              Shared location
+            </Text>
+            <Text style={[styles.locationMetaText, isMe && styles.locationMetaTextSent]}>{locationLabel}</Text>
+            <Text style={[styles.timeText, isMe && styles.timeTextSent]}>{timeStr}</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    if (item.type === 'image' && item.imageUrl) {
       return (
         <View style={[styles.bubbleRow, isMe ? styles.bubbleRowRight : styles.bubbleRowLeft]}>
           <View style={[styles.bubble, isMe ? styles.bubbleSent : styles.bubbleReceived]}>
-            <Ionicons name="location" size={18} color={isMe ? Colors.white : Colors.accent} />
-            <Text style={[styles.bubbleText, isMe && styles.bubbleTextSent]}>
-              📍 Shared location
-            </Text>
+            <Image source={{ uri: item.imageUrl }} style={styles.imageMessage} resizeMode="cover" />
             <Text style={[styles.timeText, isMe && styles.timeTextSent]}>{timeStr}</Text>
           </View>
         </View>
@@ -165,7 +275,11 @@ export default function GroupChatScreen() {
 
       {/* Input bar */}
       <View style={[styles.inputBar, { paddingBottom: insets.bottom + Spacing.sm }]}>
-        <TouchableOpacity style={styles.attachBtn}>
+        <TouchableOpacity
+          style={styles.attachBtn}
+          onPress={handleAttachPhoto}
+          disabled={isUploadingImage || isSharingLocation}
+        >
           <Ionicons name="add-circle-outline" size={26} color={Colors.slate} />
         </TouchableOpacity>
         <TextInput
@@ -177,6 +291,17 @@ export default function GroupChatScreen() {
           multiline
           maxLength={500}
         />
+        <TouchableOpacity
+          style={styles.locationBtn}
+          onPress={handleShareLocation}
+          disabled={isUploadingImage || isSharingLocation}
+        >
+          <Ionicons
+            name={isSharingLocation ? 'hourglass-outline' : 'location-outline'}
+            size={20}
+            color={Colors.slate}
+          />
+        </TouchableOpacity>
         <TouchableOpacity
           style={[styles.sendBtn, !inputText.trim() && styles.sendBtnDisabled]}
           onPress={handleSend}
@@ -322,6 +447,21 @@ const styles = StyleSheet.create({
   bubbleTextSent: {
     color: Colors.white,
   },
+  locationMetaText: {
+    fontFamily: Typography.body,
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  locationMetaTextSent: {
+    color: Colors.white + 'D9',
+  },
+  imageMessage: {
+    width: 220,
+    height: 220,
+    borderRadius: BorderRadius.sm,
+    marginBottom: 4,
+  },
   timeText: {
     fontFamily: Typography.body,
     fontSize: 11,
@@ -358,6 +498,14 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     maxHeight: 100,
     marginRight: Spacing.sm,
+  },
+  locationBtn: {
+    width: 36,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.xs,
+    marginBottom: 2,
   },
   sendBtn: {
     width: 40,

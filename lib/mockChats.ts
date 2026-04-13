@@ -116,9 +116,16 @@ export function getMockChatPreview(activityId: string) {
   }
 
   const latest = thread.messages[thread.messages.length - 1];
+  const previewText =
+    latest.type === 'image'
+      ? 'Shared a photo'
+      : latest.type === 'location'
+        ? 'Shared a location update'
+        : latest.text ?? 'New message';
+
   return {
     senderName: latest.senderName,
-    text: latest.text ?? 'Shared a location update',
+    text: previewText,
     createdAt: latest.createdAt,
   };
 }

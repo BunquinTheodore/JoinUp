@@ -39,8 +39,9 @@ export interface Message {
   senderName: string;
   senderPhoto: string;
   text?: string;
+  imageUrl?: string;
   location?: { lat: number; lng: number };
-  type: 'text' | 'location' | 'system';
+  type: 'text' | 'image' | 'location' | 'system';
   isPinned: boolean;
   createdAt: string; // ISO 8601
 }
