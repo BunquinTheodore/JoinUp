@@ -129,11 +129,18 @@ export function useActivities() {
       if (data) {
         // Fetch participant IDs for each activity
         const activityIds = data.map((a: any) => a.id);
-        const { data: parts } = await supabase
-          .from('participants')
-          .select('activity_id, user_id')
-          .in('activity_id', activityIds.length > 0 ? activityIds : ['__none__'])
-          .eq('status', 'joined');
+        let parts: Array<{ activity_id: string; user_id: string }> = [];
+
+        if (activityIds.length > 0) {
+          const { data: participantsData, error: participantsError } = await supabase
+            .from('participants')
+            .select('activity_id, user_id')
+            .in('activity_id', activityIds)
+            .eq('status', 'joined');
+
+          if (participantsError) throw participantsError;
+          parts = participantsData ?? [];
+        }
 
         const participantMap: Record<string, string[]> = {};
         (parts ?? []).forEach((p: any) => {

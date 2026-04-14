@@ -109,10 +109,14 @@ export default function SignInScreen() {
 
         <Animated.View entering={FadeInDown.delay(400).springify()}>
           <SecondaryButton
-            title="Sign in with Google"
+            title="Continue with Google"
             onPress={async () => {
-              await signInWithGoogle();
+              try {
+                await signInWithGoogle();
+              } catch {}
             }}
+            loading={isLoading}
+            disabled={isLoading}
             icon={<Text style={styles.googleIcon}>G</Text>}
           />
         </Animated.View>

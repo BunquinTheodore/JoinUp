@@ -134,9 +134,8 @@ export default function SplashScreen() {
           style={styles.primaryBtn}
         />
         <SecondaryButton
-          title="Sign in with Google"
+          title="Continue with Email"
           onPress={() => router.push('/(auth)/sign-in')}
-          icon={<Text style={styles.googleIcon}>G</Text>}
           style={styles.secondaryBtn}
         />
       </Animated.View>
@@ -212,10 +211,5 @@ const styles = StyleSheet.create({
   },
   secondaryBtn: {
     marginBottom: Spacing.sm,
-  },
-  googleIcon: {
-    fontFamily: Typography.bodyBold,
-    fontSize: 18,
-    color: '#4285F4',
   },
 });

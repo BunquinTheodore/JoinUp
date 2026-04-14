@@ -1,8 +1,53 @@
 import { useState, useCallback, useEffect } from 'react';
+import { Platform } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
+import { makeRedirectUri } from 'expo-auth-session';
 import { useAuthStore } from '../store/authStore';
 import { supabase } from '../lib/supabase';
 import { queryClient } from '../lib/queryClient';
 import type { User } from '../types';
+
+WebBrowser.maybeCompleteAuthSession();
+
+function extractAuthCallbackData(callbackUrl: string) {
+  const parsedUrl = new URL(callbackUrl);
+  const hash = parsedUrl.hash.startsWith('#') ? parsedUrl.hash.slice(1) : parsedUrl.hash;
+  const hashParams = new URLSearchParams(hash);
+
+  return {
+    code: parsedUrl.searchParams.get('code'),
+    accessToken: parsedUrl.searchParams.get('access_token') ?? hashParams.get('access_token'),
+    refreshToken: parsedUrl.searchParams.get('refresh_token') ?? hashParams.get('refresh_token'),
+    errorDescription:
+      parsedUrl.searchParams.get('error_description') ??
+      parsedUrl.searchParams.get('error') ??
+      hashParams.get('error_description') ??
+      hashParams.get('error'),
+  };
+}
+
+async function isGoogleProviderEnabled() {
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    return true;
+  }
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/settings`, {
+    headers: {
+      apikey: supabaseKey,
+      Authorization: `Bearer ${supabaseKey}`,
+    },
+  });
+
+  if (!response.ok) {
+    return true;
+  }
+
+  const settings = await response.json();
+  return !!settings?.external?.google;
+}
 
 function mapProfile(id: string, profile: any): User {
   return {
@@ -88,27 +133,60 @@ export function useAuth() {
       }
     );
 
-    // Check for existing session on mount
-    supabase.auth.getSession()
-      .then(async ({ data: { session } }) => {
+    const bootstrapAuth = async () => {
+      try {
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          const callbackUrl = new URL(window.location.href);
+          const callbackCode = callbackUrl.searchParams.get('code');
+          const callbackError =
+            callbackUrl.searchParams.get('error_description') ??
+            callbackUrl.searchParams.get('error');
+
+          if (callbackError) {
+            setError(decodeURIComponent(callbackError));
+          }
+
+          if (callbackCode) {
+            const { data: exchangedData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(callbackCode);
+            if (exchangeError) {
+              throw exchangeError;
+            }
+
+            await syncSession(exchangedData.session);
+
+            // Clean OAuth callback params from URL after exchanging code.
+            callbackUrl.searchParams.delete('code');
+            callbackUrl.searchParams.delete('state');
+            callbackUrl.searchParams.delete('error');
+            callbackUrl.searchParams.delete('error_code');
+            callbackUrl.searchParams.delete('error_description');
+            callbackUrl.searchParams.delete('provider_token');
+            callbackUrl.searchParams.delete('provider_refresh_token');
+
+            window.history.replaceState({}, '', `${callbackUrl.pathname}${callbackUrl.search}${callbackUrl.hash}`);
+          }
+        }
+
+        const { data: { session } } = await supabase.auth.getSession();
         await syncSession(session);
-      })
-      .catch(() => {
+      } catch {
         if (isActive) {
           setUser(null);
         }
-      })
-      .finally(() => {
+      } finally {
         if (isActive) {
           setLoading(false);
         }
-      });
+      }
+    };
+
+    bootstrapAuth();
 
     return () => {
       isActive = false;
       subscription.unsubscribe();
     };
-  }, [setUser, setLoading]);
+  }, [setLoading, setUser]);
 
   useEffect(() => {
     if (!isLoading) {
@@ -202,10 +280,102 @@ export function useAuth() {
     try {
       setLoading(true);
       setError(null);
-      // Google OAuth is not configured yet — placeholder
-      setError('Google sign in is not configured yet. Use email/password.');
+
+      const redirectTo = makeRedirectUri({
+        scheme: 'joinup',
+      });
+
+      const callbackRedirectTo =
+        Platform.OS === 'web' && typeof window !== 'undefined'
+          ? window.location.origin
+          : redirectTo;
+
+      const googleEnabled = await isGoogleProviderEnabled();
+      if (!googleEnabled) {
+        throw new Error('Google authentication is not enabled in Supabase yet.');
+      }
+
+      if (Platform.OS === 'web') {
+        const { data: webOAuthData, error: webSignInError } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: callbackRedirectTo,
+            skipBrowserRedirect: true,
+            queryParams: {
+              access_type: 'offline',
+              prompt: 'consent',
+            },
+          },
+        });
+
+        if (webSignInError) throw webSignInError;
+        if (!webOAuthData?.url) {
+          throw new Error('Google authentication could not be started.');
+        }
+
+        window.location.assign(webOAuthData.url);
+        return;
+      }
+
+      const { data, error: nativeSignInError } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: callbackRedirectTo,
+          skipBrowserRedirect: true,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent',
+          },
+        },
+      });
+
+      if (nativeSignInError) throw nativeSignInError;
+      if (!data?.url) {
+        throw new Error('Google authentication could not be started.');
+      }
+
+      const result = await WebBrowser.openAuthSessionAsync(data.url, callbackRedirectTo);
+
+      if (result.type !== 'success' || !result.url) {
+        throw new Error('Google authentication was canceled.');
+      }
+
+      const { code, accessToken, refreshToken, errorDescription } = extractAuthCallbackData(result.url);
+
+      if (errorDescription) {
+        throw new Error(decodeURIComponent(errorDescription));
+      }
+
+      if (code) {
+        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+        if (exchangeError) throw exchangeError;
+        return;
+      }
+
+      if (accessToken && refreshToken) {
+        const { error: setSessionError } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+
+        if (setSessionError) throw setSessionError;
+        return;
+      }
+
+      throw new Error('Google authentication did not return a valid session.');
     } catch (err: any) {
-      setError(err.message ?? 'Google sign in failed.');
+      const message = String(err?.message ?? 'Google sign in failed.');
+
+      if (
+        message.toLowerCase().includes('unsupported provider') ||
+        message.toLowerCase().includes('google authentication is not enabled')
+      ) {
+        setError('Google authentication is not enabled in Supabase yet. Please contact the project admin.');
+      } else {
+        setError(message);
+      }
+
+      throw err;
     } finally {
       setLoading(false);
     }

@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
 import { InputField } from '../../components/ui/InputField';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
+import { SecondaryButton } from '../../components/ui/SecondaryButton';
 import { CategoryChip } from '../../components/ui/CategoryChip';
 import { useAuth } from '../../hooks/useAuth';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,7 +25,7 @@ const INTEREST_OPTIONS = ['Fitness', 'Study', 'Outdoors', 'Gaming', 'Café', 'Mu
 export default function SignUpScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { signUp, isLoading, error } = useAuth();
+  const { signUp, signInWithGoogle, isLoading, error } = useAuth();
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -212,6 +213,26 @@ export default function SignUpScreen() {
           />
         </Animated.View>
 
+        <View style={styles.dividerRow}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>or</Text>
+          <View style={styles.dividerLine} />
+        </View>
+
+        <Animated.View entering={FadeInDown.delay(500).springify()}>
+          <SecondaryButton
+            title="Continue with Google"
+            onPress={async () => {
+              try {
+                await signInWithGoogle();
+              } catch {}
+            }}
+            loading={isLoading}
+            disabled={isLoading}
+            icon={<Text style={styles.googleIcon}>G</Text>}
+          />
+        </Animated.View>
+
         <TouchableOpacity
           onPress={() => router.push('/(auth)/sign-in')}
           style={styles.signInLink}
@@ -333,6 +354,28 @@ const styles = StyleSheet.create({
   },
   submitBtn: {
     marginTop: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: Colors.divider,
+  },
+  dividerText: {
+    fontFamily: Typography.body,
+    fontSize: 14,
+    color: Colors.slate,
+    marginHorizontal: Spacing.md,
+  },
+  googleIcon: {
+    fontFamily: Typography.bodyBold,
+    fontSize: 18,
+    color: '#4285F4',
   },
   signInLink: {
     alignItems: 'center',
