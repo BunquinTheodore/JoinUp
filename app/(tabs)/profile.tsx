@@ -20,6 +20,7 @@ import { InputField } from '../../components/ui/InputField';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { useAuthStore } from '../../store/authStore';
 import { supabase } from '../../lib/supabase';
+import { signOutAndResetSession } from '../../hooks/useAuth';
 
 type ProfileTab = 'Joined' | 'Hosting' | 'Past';
 type HistoryActivity = {
@@ -58,9 +59,11 @@ export default function ProfileScreen() {
 
   const [activeTab, setActiveTab] = useState<ProfileTab>('Joined');
   const [showEditSheet, setShowEditSheet] = useState(false);
+  const [showSettingsSheet, setShowSettingsSheet] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
+  const [authActionLoading, setAuthActionLoading] = useState<'switch' | 'logout' | null>(null);
   const [editName, setEditName] = useState(user?.displayName ?? '');
   const [editLocation, setEditLocation] = useState(user?.location ?? '');
   const [editBio, setEditBio] = useState(user?.bio ?? '');
@@ -181,6 +184,24 @@ export default function ProfileScreen() {
     }
   }, [editBio, editLocation, editName, updateUser, user?.uid]);
 
+  const handleAuthAction = useCallback(
+    async (action: 'switch' | 'logout') => {
+      const isSwitch = action === 'switch';
+      try {
+        setAuthActionLoading(action);
+        setShowSettingsSheet(false);
+        await signOutAndResetSession();
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        router.replace(isSwitch ? '/(auth)/sign-in' : '/(auth)');
+      } catch (error: any) {
+        Alert.alert('Sign out failed', error.message ?? 'Could not complete the request.');
+      } finally {
+        setAuthActionLoading(null);
+      }
+    },
+    [router]
+  );
+
   const getTabActivities = useCallback(() => {
     switch (activeTab) {
       case 'Joined':
@@ -212,7 +233,11 @@ export default function ProfileScreen() {
           >
             <Ionicons name="arrow-back" size={24} color={Colors.white} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.settingsBtn}>
+          <TouchableOpacity
+            style={styles.settingsBtn}
+            onPress={() => setShowSettingsSheet(true)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
             <Ionicons name="settings-outline" size={24} color={Colors.white} />
           </TouchableOpacity>
         </View>
@@ -384,6 +409,64 @@ export default function ProfileScreen() {
           />
         </ScrollView>
       </BottomSheet>
+
+      {/* Account Settings Sheet */}
+      <BottomSheet
+        visible={showSettingsSheet}
+        onClose={() => setShowSettingsSheet(false)}
+        snapPoints={[330]}
+      >
+        <View style={styles.settingsSheetContent}>
+          <Text style={styles.sheetTitle}>Account settings</Text>
+          <Text style={styles.settingsSubtitle}>
+            Manage how this device signs into JoinUp.
+          </Text>
+
+          <TouchableOpacity
+            style={styles.settingsAction}
+            onPress={() => handleAuthAction('switch')}
+            activeOpacity={0.85}
+            disabled={authActionLoading !== null}
+          >
+            <View style={[styles.settingsIconWrap, styles.settingsIconAccent]}>
+              <Ionicons name="swap-horizontal" size={20} color={Colors.accent} />
+            </View>
+            <View style={styles.settingsActionTextWrap}>
+              <Text style={styles.settingsActionTitle}>Switch account</Text>
+              <Text style={styles.settingsActionSubtitle}>
+                Sign out and jump straight to sign in.
+              </Text>
+            </View>
+            {authActionLoading === 'switch' ? (
+              <ActivityIndicator color={Colors.accent} />
+            ) : (
+              <Ionicons name="chevron-forward" size={18} color={Colors.slate} />
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingsAction}
+            onPress={() => handleAuthAction('logout')}
+            activeOpacity={0.85}
+            disabled={authActionLoading !== null}
+          >
+            <View style={[styles.settingsIconWrap, styles.settingsIconDanger]}>
+              <Ionicons name="log-out-outline" size={20} color={Colors.error} />
+            </View>
+            <View style={styles.settingsActionTextWrap}>
+              <Text style={styles.settingsActionTitle}>Log out</Text>
+              <Text style={styles.settingsActionSubtitle}>
+                End this session and return to the welcome screen.
+              </Text>
+            </View>
+            {authActionLoading === 'logout' ? (
+              <ActivityIndicator color={Colors.error} />
+            ) : (
+              <Ionicons name="chevron-forward" size={18} color={Colors.slate} />
+            )}
+          </TouchableOpacity>
+        </View>
+      </BottomSheet>
     </View>
   );
 }
@@ -413,6 +496,54 @@ const styles = StyleSheet.create({
     height: 44,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  settingsSheetContent: {
+    flex: 1,
+    paddingBottom: Spacing.lg,
+  },
+  settingsSubtitle: {
+    fontFamily: Typography.body,
+    fontSize: 14,
+    color: Colors.slate,
+    marginBottom: Spacing.md,
+  },
+  settingsAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.sm,
+    borderRadius: BorderRadius.card,
+    backgroundColor: Colors.cream,
+    marginBottom: Spacing.sm,
+  },
+  settingsIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsIconAccent: {
+    backgroundColor: Colors.accent + '18',
+  },
+  settingsIconDanger: {
+    backgroundColor: Colors.error + '14',
+  },
+  settingsActionTextWrap: {
+    flex: 1,
+  },
+  settingsActionTitle: {
+    fontFamily: Typography.bodyBold,
+    fontSize: 15,
+    color: Colors.text,
+    marginBottom: 2,
+  },
+  settingsActionSubtitle: {
+    fontFamily: Typography.body,
+    fontSize: 13,
+    color: Colors.slate,
+    lineHeight: 18,
   },
   profileInfo: {
     alignItems: 'center',

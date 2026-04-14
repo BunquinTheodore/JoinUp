@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { supabase } from '../lib/supabase';
+import { queryClient } from '../lib/queryClient';
 import type { User } from '../types';
 
 function mapProfile(id: string, profile: any): User {
@@ -53,8 +54,14 @@ async function resolveSessionUser(session: any, setUser: (user: User | null) => 
   });
 }
 
+export async function signOutAndResetSession() {
+  await supabase.auth.signOut({ scope: 'local' });
+  queryClient.clear();
+  useAuthStore.getState().signOut();
+}
+
 export function useAuth() {
-  const { user, isAuthenticated, isLoading, setUser, setLoading, signOut: storeSignOut } = useAuthStore();
+  const { user, isAuthenticated, isLoading, setUser, setLoading } = useAuthStore();
   const [error, setError] = useState<string | null>(null);
 
   // Listen for auth state changes
@@ -206,12 +213,16 @@ export function useAuth() {
 
   const handleSignOut = useCallback(async () => {
     try {
-      await supabase.auth.signOut();
-      storeSignOut();
+      setLoading(true);
+      setError(null);
+      await signOutAndResetSession();
     } catch (err) {
       setError('Failed to sign out.');
+      throw err;
+    } finally {
+      setLoading(false);
     }
-  }, [storeSignOut]);
+  }, [setLoading]);
 
   return {
     user,
