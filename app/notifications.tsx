@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,85 +11,89 @@ import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { formatDistanceToNow, parseISO } from 'date-fns';
-import { Colors, Typography, Spacing, BorderRadius, CategoryColors } from '../constants/theme';
+import { Colors, Typography, Spacing } from '../constants/theme';
 import { ScreenWrapper } from '../components/layout/ScreenWrapper';
 import { NavBar } from '../components/layout/NavBar';
 import { EmptyState } from '../components/ui/EmptyState';
 import type { Notification } from '../types';
-
-/* ── Mock notifications ───────────────────────────────────── */
-const MOCK_NOTIFICATIONS: Notification[] = [
-  {
-    id: 'notif-1',
-    userId: 'user-1',
-    type: 'join',
-    title: 'New participant!',
-    body: 'Sofia Rivera joined "Morning Yoga in the Park"',
-    activityId: 'act-1',
-    read: false,
-    createdAt: new Date(Date.now() - 600_000).toISOString(),
-  },
-  {
-    id: 'notif-2',
-    userId: 'user-1',
-    type: 'chat',
-    title: 'New message',
-    body: 'Lena Chen sent a message in "Coffee & Study Session"',
-    activityId: 'act-2',
-    read: false,
-    createdAt: new Date(Date.now() - 3_600_000).toISOString(),
-  },
-  {
-    id: 'notif-3',
-    userId: 'user-1',
-    type: 'reminder',
-    title: 'Starting soon!',
-    body: '"Sunset Hiking at Twin Peaks" starts in 1 hour',
-    activityId: 'act-3',
-    read: true,
-    createdAt: new Date(Date.now() - 7_200_000).toISOString(),
-  },
-  {
-    id: 'notif-4',
-    userId: 'user-1',
-    type: 'join',
-    title: 'Activity full!',
-    body: '"Beach Volleyball" has reached its max participants 🎉',
-    activityId: 'act-4',
-    read: true,
-    createdAt: new Date(Date.now() - 86_400_000).toISOString(),
-  },
-  {
-    id: 'notif-5',
-    userId: 'user-1',
-    type: 'update',
-    title: 'Activity updated',
-    body: 'The time for "Dinner & Wine Night" has been changed to 8:00 PM',
-    activityId: 'act-5',
-    read: true,
-    createdAt: new Date(Date.now() - 172_800_000).toISOString(),
-  },
-];
+import { supabase } from '../lib/supabase';
+import { useAuthStore } from '../store/authStore';
 
 const ICON_MAP: Record<string, { name: keyof typeof Ionicons.glyphMap; color: string }> = {
   join: { name: 'person-add', color: Colors.success },
   chat: { name: 'chatbubble', color: Colors.accent },
   reminder: { name: 'alarm', color: '#F59E0B' },
   update: { name: 'create', color: Colors.primary },
+  approval: { name: 'shield-checkmark', color: Colors.warning },
 };
+
+function mapNotification(row: any): Notification {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    type: row.type,
+    title: row.title,
+    body: row.body,
+    activityId: row.activity_id ?? null,
+    read: Boolean(row.read),
+    createdAt: row.created_at,
+  };
+}
 
 export default function NotificationsScreen() {
   const router = useRouter();
+  const user = useAuthStore((state) => state.user);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    // Simulate fetching
-    setTimeout(() => {
-      setNotifications(MOCK_NOTIFICATIONS);
+  const fetchNotifications = useCallback(async () => {
+    if (!user?.uid) {
+      setNotifications([]);
       setIsLoading(false);
-    }, 400);
-  }, []);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', user.uid)
+      .order('created_at', { ascending: false });
+
+    if (!error) {
+      setNotifications((data ?? []).map(mapNotification));
+    }
+
+    setIsLoading(false);
+  }, [user?.uid]);
+
+  useEffect(() => {
+    setIsLoading(true);
+    void fetchNotifications();
+  }, [fetchNotifications]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    const channel = supabase
+      .channel(`notifications:${user.uid}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${user.uid}`,
+        },
+        () => {
+          void fetchNotifications();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [fetchNotifications, user?.uid]);
 
   const unreadCount = useMemo(
     () => notifications.filter((n) => !n.read).length,
@@ -97,7 +101,14 @@ export default function NotificationsScreen() {
   );
 
   const handleMarkAllRead = () => {
+    if (!user?.uid || notifications.length === 0) return;
+
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    void supabase
+      .from('notifications')
+      .update({ read: true })
+      .eq('user_id', user.uid)
+      .eq('read', false);
   };
 
   const handleNotificationPress = (notif: Notification) => {
@@ -105,6 +116,8 @@ export default function NotificationsScreen() {
     setNotifications((prev) =>
       prev.map((n) => (n.id === notif.id ? { ...n, read: true } : n))
     );
+    void supabase.from('notifications').update({ read: true }).eq('id', notif.id);
+
     // Navigate to activity
     if (notif.activityId) {
       router.push(`/activity/${notif.activityId}`);

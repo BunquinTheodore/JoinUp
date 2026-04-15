@@ -24,7 +24,7 @@ import { useAuthStore } from '../../store/authStore';
 export default function HomeFeedScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { activities, isLoading, joinActivity } = useActivities();
+  const { activities, isLoading, joinActivity, joinedActivityIds, refetch } = useActivities();
   const user = useAuthStore((s) => s.user);
 
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -46,15 +46,15 @@ export default function HomeFeedScreen() {
       );
     }
 
-    if (user?.activitiesJoined?.length) {
-      const joinedIds = new Set(user.activitiesJoined);
+    if (joinedActivityIds.length) {
+      const joinedIds = new Set(joinedActivityIds);
       filtered = filtered.filter(
         (activity) => !joinedIds.has(activity.id) || fadingActivityIds.includes(activity.id)
       );
     }
 
     return filtered;
-  }, [activities, fadingActivityIds, searchQuery, selectedCategory, user?.activitiesJoined]);
+  }, [activities, fadingActivityIds, joinedActivityIds, searchQuery, selectedCategory]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -65,7 +65,7 @@ export default function HomeFeedScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await new Promise((r) => setTimeout(r, 1000));
+    await refetch();
     setRefreshing(false);
   };
 

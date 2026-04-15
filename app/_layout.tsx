@@ -10,6 +10,8 @@ import { queryClient } from '../lib/queryClient';
 import { StatusBar } from 'react-native';
 import { useAuth } from '../hooks/useAuth';
 import { useAuthStore } from '../store/authStore';
+import { supabase } from '../lib/supabase';
+import { InAppNotificationBanner } from '../components/ui/InAppNotificationBanner';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -23,8 +25,13 @@ export default function RootLayout() {
   useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const { isAuthenticated, isLoading } = useAuthStore();
+  const { isAuthenticated, isLoading, user } = useAuthStore();
   const [authBootstrapped, setAuthBootstrapped] = useState(false);
+  const [bannerNotification, setBannerNotification] = useState<{
+    id: string;
+    title: string;
+    body: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!isLoading) {
@@ -69,6 +76,37 @@ export default function RootLayout() {
     }
   }, [authBootstrapped, fontsLoaded, isAuthenticated, pathname, router]);
 
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    const channel = supabase
+      .channel(`banner-notifications:${user.uid}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${user.uid}`,
+        },
+        (payload: any) => {
+          const incoming = payload.new;
+          if (!incoming?.id) return;
+
+          setBannerNotification({
+            id: incoming.id,
+            title: incoming.title ?? 'Notification',
+            body: incoming.body ?? '',
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [user?.uid]);
+
   if (!fontsLoaded || !authBootstrapped) {
     return null;
   }
@@ -78,6 +116,10 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
           <StatusBar barStyle="light-content" />
+          <InAppNotificationBanner
+            notification={bannerNotification}
+            onHidden={() => setBannerNotification(null)}
+          />
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="(auth)" />
             <Stack.Screen name="(tabs)" />

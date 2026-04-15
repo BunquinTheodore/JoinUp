@@ -33,6 +33,8 @@ export interface Activity {
   createdAt: string; // ISO 8601
 }
 
+export type JoinRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
 export interface Message {
   id: string;
   activityId: string;
@@ -53,7 +55,7 @@ export interface Notification {
   type: 'join' | 'comment' | 'reminder' | 'approval' | 'chat' | 'update';
   title: string;
   body: string;
-  activityId: string;
+  activityId: string | null;
   read: boolean;
   createdAt: string; // ISO 8601
 }

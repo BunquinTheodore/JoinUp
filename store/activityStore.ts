@@ -1,12 +1,18 @@
 import { create } from 'zustand';
-import type { Activity } from '../types';
+import type { Activity, JoinRequestStatus } from '../types';
 import { MOCK_ACTIVITIES } from '../lib/mockActivities';
 
 interface ActivityState {
   activities: Activity[];
+  joinStatuses: Record<string, JoinRequestStatus>;
   selectedCategory: string;
   searchQuery: string;
   setActivities: (activities: Activity[]) => void;
+  setJoinStatuses: (
+    next:
+      | Record<string, JoinRequestStatus>
+      | ((current: Record<string, JoinRequestStatus>) => Record<string, JoinRequestStatus>)
+  ) => void;
   updateActivity: (activity: Activity) => void;
   removeActivity: (activityId: string) => void;
   setSelectedCategory: (category: string) => void;
@@ -20,9 +26,17 @@ function dedupeActivities(activities: Activity[]) {
 
 export const useActivityStore = create<ActivityState>((set, get) => ({
   activities: MOCK_ACTIVITIES,
+  joinStatuses: {},
   selectedCategory: 'All',
   searchQuery: '',
   setActivities: (activities) => set({ activities: dedupeActivities(activities) }),
+  setJoinStatuses: (next) =>
+    set((state) => ({
+      joinStatuses:
+        typeof next === 'function'
+          ? next(state.joinStatuses)
+          : next,
+    })),
   updateActivity: (activity) =>
     set((state) => ({
       activities: dedupeActivities([

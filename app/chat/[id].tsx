@@ -21,7 +21,6 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { format } from 'date-fns';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
-import { NavBar } from '../../components/layout/NavBar';
 import { useChat } from '../../hooks/useChat';
 import { useActivities } from '../../hooks/useActivities';
 import { useAuthStore } from '../../store/authStore';
@@ -33,7 +32,7 @@ export default function GroupChatScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
-  const { activities } = useActivities();
+  const { activities, getJoinStatus, canAccessChat } = useActivities();
   const { messages, isLoading, sendMessage, sendImage, sendLocation, pinnedMessage } = useChat(id ?? '');
 
   const [inputText, setInputText] = useState('');
@@ -45,6 +44,8 @@ export default function GroupChatScreen() {
     () => activities.find((a) => a.id === id),
     [activities, id]
   );
+  const joinStatus = getJoinStatus(id ?? '');
+  const isChatAllowed = canAccessChat(id ?? '', activity?.hostId);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -209,6 +210,38 @@ export default function GroupChatScreen() {
       </View>
     );
   };
+
+  if (activity && !isChatAllowed) {
+    const isRejected = joinStatus === 'rejected';
+
+    return (
+      <View style={[styles.container, { paddingTop: insets.top }]}> 
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Ionicons name="arrow-back" size={24} color={Colors.text} />
+          </TouchableOpacity>
+          <View style={styles.headerInfo}>
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              {activity.title}
+            </Text>
+            <Text style={styles.headerSubtitle}>Chat access required</Text>
+          </View>
+        </View>
+
+        <View style={styles.lockedWrap}>
+          <View style={styles.lockedIconWrap}>
+            <Ionicons name="lock-closed" size={28} color={Colors.slate} />
+          </View>
+          <Text style={styles.lockedTitle}>{isRejected ? 'Join request not approved' : 'Waiting for approval'}</Text>
+          <Text style={styles.lockedBody}>
+            {isRejected
+              ? 'You cannot access this chat because the request was not approved.'
+              : 'Once approved, this chat unlocks instantly.'}
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <KeyboardAvoidingView
@@ -387,6 +420,35 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  lockedWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xl,
+  },
+  lockedIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.divider,
+    marginBottom: Spacing.md,
+  },
+  lockedTitle: {
+    fontFamily: Typography.bodyBold,
+    fontSize: 18,
+    color: Colors.text,
+    textAlign: 'center',
+  },
+  lockedBody: {
+    fontFamily: Typography.body,
+    fontSize: 14,
+    color: Colors.slate,
+    marginTop: Spacing.sm,
+    textAlign: 'center',
+    lineHeight: 21,
   },
   messagesList: {
     paddingHorizontal: Spacing.md,

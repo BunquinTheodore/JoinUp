@@ -26,7 +26,7 @@ export default function ActivityDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { activities, joinActivity, leaveActivity } = useActivities();
+  const { activities, joinActivity, leaveActivity, getJoinStatus, canAccessChat, deleteRejectedJoin } = useActivities();
   const user = useAuthStore((s) => s.user);
 
   const [showJoinSheet, setShowJoinSheet] = useState(false);
@@ -50,7 +50,8 @@ export default function ActivityDetailScreen() {
 
   const chipColor = CategoryColors[activity.category] ?? Colors.accent;
   const isHost = activity.hostId === user?.uid;
-  const isParticipant = activity.participants.includes(user?.uid ?? '');
+  const joinStatus = getJoinStatus(activity.id);
+  const isParticipant = joinStatus === 'approved';
   const isFull = activity.currentSlots <= 0;
   const joined = activity.maxSlots - activity.currentSlots;
   const dateStr = activity.dateTime
@@ -61,8 +62,10 @@ export default function ActivityDetailScreen() {
     if (!user) return;
     setIsJoining(true);
     try {
-      await joinActivity(activity.id, user.uid);
-      setShowJoinSheet(true);
+      const joined = await joinActivity(activity.id, user.uid);
+      if (joined) {
+        setShowJoinSheet(true);
+      }
     } catch (err) {
       Alert.alert('Error', 'Failed to join activity.');
     } finally {
@@ -215,7 +218,11 @@ export default function ActivityDetailScreen() {
           <View style={styles.bottomActions}>
             <PrimaryButton
               title="Open Chat"
-              onPress={() => router.push(`/chat/${activity.id}`)}
+              onPress={() => {
+                if (canAccessChat(activity.id, activity.hostId)) {
+                  router.push(`/chat/${activity.id}`);
+                }
+              }}
               style={styles.chatBtn}
             />
             {!isHost && (
@@ -224,6 +231,24 @@ export default function ActivityDetailScreen() {
               </TouchableOpacity>
             )}
           </View>
+        ) : joinStatus === 'pending' ? (
+          <PrimaryButton
+            title="Waiting for approval"
+            onPress={() => {}}
+            disabled
+            style={styles.joinBtn}
+          />
+        ) : joinStatus === 'rejected' ? (
+          <PrimaryButton
+            title="Delete Rejected Request"
+            onPress={async () => {
+              const removed = await deleteRejectedJoin(activity.id);
+              if (!removed) {
+                Alert.alert('Delete failed', 'Could not remove this rejected request.');
+              }
+            }}
+            style={styles.joinBtn}
+          />
         ) : (
           <PrimaryButton
             title={isFull ? 'Activity Full' : 'Join Activity'}
@@ -245,15 +270,14 @@ export default function ActivityDetailScreen() {
           <View style={styles.checkCircle}>
             <Ionicons name="checkmark" size={36} color={Colors.white} />
           </View>
-          <Text style={styles.confirmTitle}>You're In! 🎉</Text>
+          <Text style={styles.confirmTitle}>Request Sent</Text>
           <Text style={styles.confirmMessage}>
-            You've successfully joined {activity.title}. Check the group chat to connect with other participants.
+            You joined {activity.title} as pending. Chat unlocks automatically when approved.
           </Text>
           <PrimaryButton
-            title="Open Group Chat"
+            title="Got it"
             onPress={() => {
               setShowJoinSheet(false);
-              router.push(`/chat/${activity.id}`);
             }}
             style={{ marginTop: Spacing.md }}
           />

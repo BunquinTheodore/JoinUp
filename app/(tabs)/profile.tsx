@@ -21,6 +21,8 @@ import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { useAuthStore } from '../../store/authStore';
 import { supabase } from '../../lib/supabase';
 import { signOutAndResetSession } from '../../hooks/useAuth';
+import { useActivities } from '../../hooks/useActivities';
+import type { JoinRequestStatus } from '../../types';
 
 type ProfileTab = 'Joined' | 'Hosting' | 'Past';
 type HistoryActivity = {
@@ -32,6 +34,7 @@ type HistoryActivity = {
   locationName: string;
   status: string;
   hostId: string;
+  joinStatus?: JoinRequestStatus;
 };
 
 function mapHistoryActivity(row: any): HistoryActivity {
@@ -56,6 +59,7 @@ export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
   const updateUser = useAuthStore((s) => s.updateUser);
+  const { activities, joinStatuses, joinedActivityIds, deleteRejectedJoin, canAccessChat } = useActivities();
 
   const [activeTab, setActiveTab] = useState<ProfileTab>('Joined');
   const [showEditSheet, setShowEditSheet] = useState(false);
@@ -67,7 +71,6 @@ export default function ProfileScreen() {
   const [editName, setEditName] = useState(user?.displayName ?? '');
   const [editLocation, setEditLocation] = useState(user?.location ?? '');
   const [editBio, setEditBio] = useState(user?.bio ?? '');
-  const [joinedActivities, setJoinedActivities] = useState<HistoryActivity[]>([]);
   const [hostedActivities, setHostedActivities] = useState<HistoryActivity[]>([]);
   const [pastActivities, setPastActivities] = useState<HistoryActivity[]>([]);
 
@@ -89,7 +92,7 @@ export default function ProfileScreen() {
         .from('participants')
         .select('activity_id')
         .eq('user_id', user.uid)
-        .eq('status', 'joined');
+        .eq('status', 'approved');
 
       if (joinedError) throw joinedError;
 
@@ -130,7 +133,6 @@ export default function ProfileScreen() {
         (left, right) => new Date(right.dateTime).getTime() - new Date(left.dateTime).getTime()
       );
 
-      setJoinedActivities(joinedUpcoming);
       setHostedActivities(hostedUpcoming);
       setPastActivities(past);
     } catch (error: any) {
@@ -281,6 +283,32 @@ export default function ProfileScreen() {
     [router]
   );
 
+  const joinedActivities = useMemo<HistoryActivity[]>(() => {
+    const activityMap = new Map(activities.map((activity) => [activity.id, activity]));
+    const items: HistoryActivity[] = [];
+
+    joinedActivityIds.forEach((activityId) => {
+        const source = activityMap.get(activityId);
+        if (!source) return;
+
+        items.push({
+          id: source.id,
+          title: source.title,
+          category: source.category,
+          coverImage: source.coverImage,
+          dateTime: source.dateTime,
+          locationName: source.location.name,
+          status: source.status,
+          hostId: source.hostId,
+          joinStatus: joinStatuses[activityId],
+        });
+      });
+
+    return items.sort(
+      (left, right) => new Date(left.dateTime).getTime() - new Date(right.dateTime).getTime()
+    );
+  }, [activities, joinStatuses, joinedActivityIds]);
+
   const getTabActivities = useCallback(() => {
     switch (activeTab) {
       case 'Joined':
@@ -413,6 +441,14 @@ export default function ProfileScreen() {
           ) : (
             getTabActivities().map((activity, index) => {
               const chipColor = CategoryColors[activity.category as keyof typeof CategoryColors] ?? Colors.accent;
+              const isJoinedTab = activeTab === 'Joined';
+              const joinStatus = activity.joinStatus;
+              const statusColor =
+                joinStatus === 'approved'
+                  ? Colors.success
+                  : joinStatus === 'rejected'
+                    ? Colors.error
+                    : Colors.warning;
               return (
                 <Animated.View
                   key={activity.id}
@@ -439,6 +475,42 @@ export default function ProfileScreen() {
                     <Text style={styles.miniCardMeta} numberOfLines={1}>
                       {activity.locationName}
                     </Text>
+                    {isJoinedTab && joinStatus ? (
+                      <View style={[styles.joinStatusPill, { backgroundColor: statusColor + '1A' }]}>
+                        <Text style={[styles.joinStatusText, { color: statusColor }]}>
+                          {joinStatus === 'approved'
+                            ? 'Approved'
+                            : joinStatus === 'rejected'
+                              ? 'Not approved'
+                              : 'Waiting for approval'}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {isJoinedTab && joinStatus === 'approved' ? (
+                      <TouchableOpacity
+                        style={styles.inlineActionBtn}
+                        onPress={() => {
+                          if (canAccessChat(activity.id, activity.hostId)) {
+                            router.push(`/chat/${activity.id}`);
+                          }
+                        }}
+                      >
+                        <Text style={styles.inlineActionText}>Open chat</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                    {isJoinedTab && joinStatus === 'rejected' ? (
+                      <TouchableOpacity
+                        style={styles.inlineDeleteBtn}
+                        onPress={async () => {
+                          const removed = await deleteRejectedJoin(activity.id);
+                          if (!removed) {
+                            Alert.alert('Delete failed', 'Could not remove this rejected activity.');
+                          }
+                        }}
+                      >
+                        <Text style={styles.inlineDeleteText}>Delete</Text>
+                      </TouchableOpacity>
+                    ) : null}
                   </TouchableOpacity>
                 </Animated.View>
               );
@@ -774,7 +846,48 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.slate,
     paddingHorizontal: Spacing.sm,
-    paddingBottom: Spacing.sm,
+    paddingBottom: Spacing.xs,
+  },
+  joinStatusPill: {
+    alignSelf: 'flex-start',
+    borderRadius: BorderRadius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginHorizontal: Spacing.sm,
+    marginBottom: Spacing.xs,
+  },
+  joinStatusText: {
+    fontFamily: Typography.bodyMed,
+    fontSize: 11,
+  },
+  inlineActionBtn: {
+    marginHorizontal: Spacing.sm,
+    marginBottom: Spacing.sm,
+    borderRadius: BorderRadius.pill,
+    backgroundColor: Colors.accent,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignSelf: 'flex-start',
+  },
+  inlineActionText: {
+    color: Colors.white,
+    fontFamily: Typography.bodyBold,
+    fontSize: 12,
+  },
+  inlineDeleteBtn: {
+    marginHorizontal: Spacing.sm,
+    marginBottom: Spacing.sm,
+    borderRadius: BorderRadius.pill,
+    borderWidth: 1,
+    borderColor: Colors.error,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignSelf: 'flex-start',
+  },
+  inlineDeleteText: {
+    color: Colors.error,
+    fontFamily: Typography.bodyBold,
+    fontSize: 12,
   },
   sheetTitle: {
     fontFamily: Typography.display,
