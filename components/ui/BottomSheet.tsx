@@ -5,6 +5,7 @@ import {
   StyleSheet,
   Dimensions,
   Pressable,
+  Platform,
 } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -35,6 +36,15 @@ export function BottomSheet({
   const context = useSharedValue({ y: 0 });
   const sheetHeight = snapPoints[0];
 
+  const blurActiveElementOnWeb = React.useCallback(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+
+    const activeElement = document.activeElement as HTMLElement | null;
+    if (activeElement?.blur) {
+      activeElement.blur();
+    }
+  }, []);
+
   React.useEffect(() => {
     if (visible) {
       translateY.value = withSpring(SCREEN_HEIGHT - sheetHeight, {
@@ -42,9 +52,10 @@ export function BottomSheet({
         stiffness: 150,
       });
     } else {
+      blurActiveElementOnWeb();
       translateY.value = withTiming(SCREEN_HEIGHT, { duration: 300 });
     }
-  }, [visible, sheetHeight]);
+  }, [blurActiveElementOnWeb, visible, sheetHeight]);
 
   const gesture = Gesture.Pan()
     .onStart(() => {
@@ -57,6 +68,7 @@ export function BottomSheet({
     .onEnd((event) => {
       if (event.translationY > 100) {
         translateY.value = withTiming(SCREEN_HEIGHT, { duration: 300 });
+        runOnJS(blurActiveElementOnWeb)();
         runOnJS(onClose)();
       } else {
         translateY.value = withSpring(SCREEN_HEIGHT - sheetHeight, {
@@ -78,7 +90,13 @@ export function BottomSheet({
   return (
     <>
       <Animated.View style={[styles.backdrop, backdropStyle]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={() => {
+            blurActiveElementOnWeb();
+            onClose();
+          }}
+        />
       </Animated.View>
       <GestureDetector gesture={gesture}>
         <Animated.View style={[styles.sheet, { height: sheetHeight }, animatedStyle]}>

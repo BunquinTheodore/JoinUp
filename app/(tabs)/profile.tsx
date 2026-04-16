@@ -47,6 +47,7 @@ function mapHistoryActivity(row: any): HistoryActivity {
     locationName: row.location_name ?? '',
     status: row.status ?? 'active',
     hostId: row.host_id,
+    joinStatus: row.join_status,
   };
 }
 
@@ -90,13 +91,16 @@ export default function ProfileScreen() {
       const now = new Date().toISOString();
       const { data: joinedRows, error: joinedError } = await supabase
         .from('participants')
-        .select('activity_id')
+        .select('activity_id, status')
         .eq('user_id', user.uid)
-        .eq('status', 'approved');
+        .neq('status', 'cancelled');
 
       if (joinedError) throw joinedError;
 
-      const joinedIds = (joinedRows ?? []).map((row: any) => row.activity_id);
+      const joinedRowsByActivityId = new Map(
+        (joinedRows ?? []).map((row: any) => [row.activity_id, row.status])
+      );
+      const joinedIds = Array.from(joinedRowsByActivityId.keys());
 
       let joinedActivitiesRaw: HistoryActivity[] = [];
       if (joinedIds.length > 0) {
@@ -107,7 +111,10 @@ export default function ProfileScreen() {
           .order('date_time', { ascending: true });
 
         if (joinedActivitiesError) throw joinedActivitiesError;
-        joinedActivitiesRaw = (joinedActivitiesData ?? []).map(mapHistoryActivity);
+        joinedActivitiesRaw = (joinedActivitiesData ?? []).map((row: any) => ({
+          ...mapHistoryActivity(row),
+          joinStatus: joinedRowsByActivityId.get(row.id) ?? 'pending',
+        }));
       }
 
       const { data: hostedData, error: hostedError } = await supabase

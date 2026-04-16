@@ -84,6 +84,7 @@ export function useActivities() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [localJoinedIds, setLocalJoinedIds] = useState<string[]>([]);
+  const [localJoinStatusHistory, setLocalJoinStatusHistory] = useState<Record<string, JoinRequestStatus>>({});
   const joinStatusesRef = useRef<Record<string, JoinRequestStatus>>({});
   const mockDecisionTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const resolverUnavailableRef = useRef(false);
@@ -95,6 +96,64 @@ export function useActivities() {
       await AsyncStorage.setItem(`joinedActivities:${user.uid}`, JSON.stringify(ids));
     } catch {
       // Best-effort persistence for chat visibility fallback.
+    }
+  }, [user?.uid]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const hydrateLocalJoinStatusHistory = async () => {
+      if (!user?.uid) {
+        if (isActive) {
+          setLocalJoinStatusHistory({});
+        }
+        return;
+      }
+
+      try {
+        const raw = await AsyncStorage.getItem(`joinStatusHistory:${user.uid}`);
+        if (!isActive) return;
+
+        const parsed = raw ? JSON.parse(raw) : {};
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          setLocalJoinStatusHistory({});
+          return;
+        }
+
+        const normalized: Record<string, JoinRequestStatus> = {};
+        Object.entries(parsed).forEach(([activityId, status]) => {
+          if (
+            status === 'pending' ||
+            status === 'approved' ||
+            status === 'rejected' ||
+            status === 'cancelled'
+          ) {
+            normalized[activityId] = status;
+          }
+        });
+
+        setLocalJoinStatusHistory(normalized);
+      } catch {
+        if (isActive) {
+          setLocalJoinStatusHistory({});
+        }
+      }
+    };
+
+    void hydrateLocalJoinStatusHistory();
+
+    return () => {
+      isActive = false;
+    };
+  }, [user?.uid]);
+
+  const persistLocalJoinStatusHistory = useCallback(async (nextHistory: Record<string, JoinRequestStatus>) => {
+    if (!user?.uid) return;
+
+    try {
+      await AsyncStorage.setItem(`joinStatusHistory:${user.uid}`, JSON.stringify(nextHistory));
+    } catch {
+      // Best-effort archive for chat/profile history fallback.
     }
   }, [user?.uid]);
 
@@ -236,7 +295,7 @@ export function useActivities() {
 
     if (fetchError) {
       // Preserve known statuses on transient failures so chat access does not flicker.
-      const fallbackStatuses = { ...joinStatusesRef.current };
+      const fallbackStatuses = { ...joinStatusesRef.current, ...localJoinStatusHistory };
 
       joinedIds.forEach((activityId) => {
         if (!fallbackStatuses[activityId]) {
@@ -246,10 +305,12 @@ export function useActivities() {
 
       setError(fetchError.message ?? 'Failed to refresh join status');
       setJoinStatuses(fallbackStatuses);
+      setLocalJoinStatusHistory(fallbackStatuses);
+      void persistLocalJoinStatusHistory(fallbackStatuses);
       return;
     }
 
-    const nextStatuses: Record<string, JoinRequestStatus> = {};
+    const nextStatuses: Record<string, JoinRequestStatus> = { ...localJoinStatusHistory };
     (data ?? []).forEach((row: any) => {
       nextStatuses[row.activity_id] = normalizeStatus(row.status);
     });
@@ -272,7 +333,9 @@ export function useActivities() {
     });
 
     setJoinStatuses(nextStatuses);
-  }, [isMockActivity, localJoinedIds, normalizeStatus, user?.activitiesJoined, user?.uid]);
+    setLocalJoinStatusHistory(nextStatuses);
+    void persistLocalJoinStatusHistory(nextStatuses);
+  }, [isMockActivity, localJoinedIds, localJoinStatusHistory, normalizeStatus, persistLocalJoinStatusHistory, user?.activitiesJoined, user?.uid]);
 
   const resolveDueJoinRequests = useCallback(async () => {
     if (!user?.uid) return;
@@ -569,6 +632,9 @@ export function useActivities() {
 
       // Persist joined activity IDs so chat visibility survives hook remounts and refreshes.
       await syncJoinedActivities(activityId, true);
+      const nextHistory = { ...localJoinStatusHistory, [activityId]: 'pending' as JoinRequestStatus };
+      setLocalJoinStatusHistory(nextHistory);
+      void persistLocalJoinStatusHistory(nextHistory);
 
       return true;
     } catch (err: any) {
@@ -580,7 +646,7 @@ export function useActivities() {
       setError(err.message ?? 'Failed to join activity');
       return false;
     }
-  }, [activities, delayRangeMs, isLegacyParticipantSchemaError, isMockActivity, joinStatuses, scheduleMockDecision, syncJoinedActivities]);
+  }, [activities, delayRangeMs, isLegacyParticipantSchemaError, isMockActivity, joinStatuses, localJoinStatusHistory, persistLocalJoinStatusHistory, scheduleMockDecision, syncJoinedActivities]);
 
   const leaveActivity = useCallback(async (activityId: string, userId: string): Promise<boolean> => {
     try {
@@ -641,19 +707,19 @@ export function useActivities() {
         if (!data) return false;
       }
 
-      await syncJoinedActivities(activityId, false);
-      setJoinStatuses((prev) => {
-        const next = { ...prev };
-        delete next[activityId];
-        return next;
-      });
+      // Keep rejected joins in local history so they remain visible after refresh.
+      setJoinStatuses((prev) => ({ ...prev, [activityId]: 'rejected' }));
+
+      const nextHistory = { ...localJoinStatusHistory, [activityId]: 'rejected' as JoinRequestStatus };
+      setLocalJoinStatusHistory(nextHistory);
+      void persistLocalJoinStatusHistory(nextHistory);
 
       return true;
     } catch (err: any) {
       setError(err.message ?? 'Failed to delete rejected request');
       return false;
     }
-  }, [isMockActivity, joinStatuses, syncJoinedActivities, user?.uid]);
+  }, [isMockActivity, joinStatuses, localJoinStatusHistory, persistLocalJoinStatusHistory, user?.uid]);
 
   const getJoinStatus = useCallback(
     (activityId: string): JoinRequestStatus | null => joinStatuses[activityId] ?? null,
