@@ -27,6 +27,7 @@ export interface Activity {
   hostName: string;
   hostPhoto: string;
   coverImage?: string;
+  images?: string[]; // Multiple images for the activity
   requiresApproval: boolean;
   reactions: { fire: number; heart: number; like: number };
   status: 'active' | 'cancelled' | 'completed';

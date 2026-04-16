@@ -108,18 +108,40 @@ export default function ActivityDetailScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
       >
-        {/* Cover image */}
+        {/* Images Gallery */}
         <Animated.View entering={FadeInDown.delay(100).springify()}>
-          <View style={styles.coverImage}>
-            {activity.coverImage ? (
+          <View style={styles.imageGallery}>
+            {(activity.images ?? []).length > 0 ? (
+              <ScrollView
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                scrollEventThrottle={16}
+                style={styles.imageCarousel}
+              >
+                {activity.images!.map((imageUrl, index) => (
+                  <Image
+                    key={index}
+                    source={{ uri: imageUrl }}
+                    style={styles.galleryImage}
+                    resizeMode="cover"
+                  />
+                ))}
+              </ScrollView>
+            ) : activity.coverImage ? (
               <Image
                 source={{ uri: activity.coverImage }}
-                style={styles.coverPhoto}
+                style={styles.galleryImage}
                 resizeMode="cover"
               />
             ) : (
               <View style={styles.coverPlaceholder}>
                 <Ionicons name="image-outline" size={48} color={Colors.slate} />
+              </View>
+            )}
+            {(activity.images ?? []).length > 1 && (
+              <View style={styles.imageCounter}>
+                <Text style={styles.imageCountText}>{(activity.images ?? []).length} photos</Text>
               </View>
             )}
           </View>
@@ -305,21 +327,40 @@ const styles = StyleSheet.create({
   content: {
     paddingBottom: 120,
   },
-  coverImage: {
-    height: 200,
+  imageGallery: {
+    height: 250,
     backgroundColor: Colors.primary + '12',
     marginHorizontal: Spacing.md,
     borderRadius: BorderRadius.card,
     overflow: 'hidden',
+    position: 'relative',
   },
-  coverPhoto: {
+  imageCarousel: {
     width: '100%',
+    height: '100%',
+  },
+  galleryImage: {
+    width: 300,
     height: '100%',
   },
   coverPlaceholder: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  imageCounter: {
+    position: 'absolute',
+    bottom: Spacing.md,
+    right: Spacing.md,
+    backgroundColor: Colors.text,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 4,
+    borderRadius: BorderRadius.pill,
+  },
+  imageCountText: {
+    fontFamily: Typography.bodyMed,
+    fontSize: 12,
+    color: Colors.white,
   },
   chipRow: {
     flexDirection: 'row',

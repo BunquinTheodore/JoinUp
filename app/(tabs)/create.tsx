@@ -58,7 +58,7 @@ export default function CreateActivityScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploadingCover, setIsUploadingCover] = useState(false);
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
-  const [coverLocalUri, setCoverLocalUri] = useState<string | null>(null);
+  const [selectedImageUris, setSelectedImageUris] = useState<string[]>([]);
   const [locationCoords, setLocationCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
 
@@ -101,24 +101,31 @@ export default function CreateActivityScreen() {
     return nextErrors;
   };
 
-  const uploadCoverImage = async (uri: string): Promise<string> => {
-    const response = await fetch(uri);
-    const blob = await response.blob();
-    const extension = (uri.split('.').pop() ?? 'jpg').split('?')[0].toLowerCase();
-    const path = `activity-covers/${user?.uid ?? 'anon'}-${Date.now()}.${extension}`;
+  const uploadActivityImages = async (uris: string[]): Promise<string[]> => {
+    const uploadedUrls: string[] = [];
 
-    const { error: uploadError } = await supabase.storage
-      .from('chat-images')
-      .upload(path, blob, {
-        upsert: false,
-        contentType: blob.type || 'image/jpeg',
-      });
+    for (const uri of uris) {
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      const extension = (uri.split('.').pop() ?? 'jpg').split('?')[0].toLowerCase();
+      const path = `activity-covers/${user?.uid ?? 'anon'}-${Date.now()}-${Math.random()}.${extension}`;
 
-    if (uploadError) {
-      throw uploadError;
+      const { error: uploadError } = await supabase.storage
+        .from('chat-images')
+        .upload(path, blob, {
+          upsert: false,
+          contentType: blob.type || 'image/jpeg',
+        });
+
+      if (uploadError) {
+        throw uploadError;
+      }
+
+      const url = supabase.storage.from('chat-images').getPublicUrl(path).data.publicUrl;
+      uploadedUrls.push(url);
     }
 
-    return supabase.storage.from('chat-images').getPublicUrl(path).data.publicUrl;
+    return uploadedUrls;
   };
 
   const handleUseMyLocation = async () => {
@@ -161,7 +168,7 @@ export default function CreateActivityScreen() {
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Permission needed', 'Please allow media access to pick a cover image.');
+        Alert.alert('Permission needed', 'Please allow media access to pick images.');
         return;
       }
 
@@ -175,10 +182,16 @@ export default function CreateActivityScreen() {
         return;
       }
 
-      setCoverLocalUri(result.assets[0].uri);
+      // Add the new image to the array
+      const newUri = result.assets[0].uri;
+      setSelectedImageUris((prev) => [...prev, newUri]);
     } catch {
       Alert.alert('Image unavailable', 'Could not select this image right now.');
     }
+  };
+
+  const handleRemoveImage = (index: number) => {
+    setSelectedImageUris((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleDateChange = (_event: DateTimePickerEvent, selectedDate?: Date) => {
@@ -234,13 +247,15 @@ export default function CreateActivityScreen() {
     setIsSubmitting(true);
     try {
       let coverImageUrl: string | null = null;
+      let activityImages: string[] = [];
 
-      if (coverLocalUri) {
+      if (selectedImageUris.length > 0) {
         setIsUploadingCover(true);
         try {
-          coverImageUrl = await uploadCoverImage(coverLocalUri);
+          activityImages = await uploadActivityImages(selectedImageUris);
+          coverImageUrl = activityImages[0]; // Use first image as cover
         } catch {
-          Alert.alert('Cover upload failed', 'The activity will still be created without a cover photo.');
+          Alert.alert('Image upload failed', 'The activity will still be created without images.');
         } finally {
           setIsUploadingCover(false);
         }
@@ -258,6 +273,7 @@ export default function CreateActivityScreen() {
           date_time: date.toISOString(),
           max_slots: parsedMaxSlots,
           cover_image: coverImageUrl,
+          images: activityImages,
           requires_approval: requiresApproval,
           status: 'active',
           host_id: user.uid,
@@ -299,18 +315,35 @@ export default function CreateActivityScreen() {
           <Text style={styles.subtitle}>Plan something awesome</Text>
         </Animated.View>
 
-        {/* Cover image */}
+        {/* Images Gallery */}
         <Animated.View entering={FadeInDown.delay(150).springify()}>
-          <TouchableOpacity style={styles.coverUpload} onPress={handleImagePick}>
-            {coverLocalUri ? (
-              <Image source={{ uri: coverLocalUri }} style={styles.coverPreview} resizeMode="cover" />
-            ) : (
-              <>
-                <Ionicons name="camera-outline" size={32} color={Colors.slate} />
-                <Text style={styles.coverText}>Add Cover Photo</Text>
-              </>
-            )}
-          </TouchableOpacity>
+          <View style={styles.imagesSection}>
+            {selectedImageUris.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.imageScrollView}
+              >
+                {selectedImageUris.map((uri, index) => (
+                  <View key={index} style={styles.imageContainer}>
+                    <Image source={{ uri }} style={styles.selectedImage} resizeMode="cover" />
+                    <TouchableOpacity
+                      style={styles.removeImageBtn}
+                      onPress={() => handleRemoveImage(index)}
+                    >
+                      <Ionicons name="close-circle" size={20} color={Colors.white} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+            ) : null}
+            <TouchableOpacity style={styles.addImageButton} onPress={handleImagePick}>
+              <Ionicons name="add-circle-outline" size={24} color={Colors.accent} />
+              <Text style={styles.addImageText}>
+                {selectedImageUris.length > 0 ? 'Add More Photos' : 'Add Cover Photo'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </Animated.View>
 
         <Animated.View entering={FadeInDown.delay(200).springify()}>
@@ -488,27 +521,45 @@ const styles = StyleSheet.create({
     color: Colors.slate,
     marginBottom: Spacing.lg,
   },
-  coverUpload: {
-    height: 140,
+  imagesSection: {
     backgroundColor: Colors.white,
     borderRadius: BorderRadius.card,
     borderWidth: 2,
     borderColor: Colors.divider,
     borderStyle: 'dashed',
+    padding: Spacing.md,
+    marginBottom: Spacing.lg,
+  },
+  imageScrollView: {
+    marginBottom: Spacing.md,
+  },
+  imageContainer: {
+    position: 'relative',
+    marginRight: Spacing.md,
+  },
+  selectedImage: {
+    width: 100,
+    height: 100,
+    borderRadius: BorderRadius.sm,
+  },
+  removeImageBtn: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: Colors.text,
+    borderRadius: 12,
+  },
+  addImageButton: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: Spacing.lg,
+    paddingVertical: Spacing.md,
     gap: Spacing.sm,
   },
-  coverPreview: {
-    width: '100%',
-    height: '100%',
-    borderRadius: BorderRadius.card,
-  },
-  coverText: {
+  addImageText: {
     fontFamily: Typography.bodyMed,
     fontSize: 14,
-    color: Colors.slate,
+    color: Colors.accent,
   },
   fieldLabel: {
     fontFamily: Typography.bodyMed,
