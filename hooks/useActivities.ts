@@ -79,6 +79,7 @@ export function useActivities() {
   const setActivities = useActivityStore((state) => state.setActivities);
   const setJoinStatuses = useActivityStore((state) => state.setJoinStatuses);
   const updateActivity = useActivityStore((state) => state.updateActivity);
+  const removeActivity = useActivityStore((state) => state.removeActivity);
   const user = useAuthStore((state) => state.user);
   const updateUser = useAuthStore((state) => state.updateUser);
 
@@ -730,6 +731,65 @@ export function useActivities() {
     }
   }, [isMockActivity, joinStatuses, persistLocalJoinStatusHistory, user?.uid]);
 
+  const deleteHostedActivity = useCallback(async (activityId: string): Promise<boolean> => {
+    if (!user?.uid) return false;
+
+    try {
+      const currentActivity = activities.find((activity) => activity.id === activityId);
+      if (!currentActivity) return false;
+      if (currentActivity.hostId !== user.uid) return false;
+
+      if (!isMockActivity(activityId)) {
+        const { error: deleteError } = await supabase
+          .from('activities')
+          .delete()
+          .eq('id', activityId)
+          .eq('host_id', user.uid);
+
+        if (deleteError) throw deleteError;
+      }
+
+      removeActivity(activityId);
+
+      setJoinStatuses((prev) => {
+        const next = { ...prev };
+        delete next[activityId];
+        return next;
+      });
+
+      const nextHistory = { ...localJoinStatusHistoryRef.current };
+      delete nextHistory[activityId];
+      localJoinStatusHistoryRef.current = nextHistory;
+      void persistLocalJoinStatusHistory(nextHistory);
+
+      const nextLocalJoined = localJoinedIds.filter((joinedId) => joinedId !== activityId);
+      setLocalJoinedIds(nextLocalJoined);
+      void persistLocalJoinedIds(nextLocalJoined);
+
+      const nextJoinedActivities = (user.activitiesJoined ?? []).filter((joinedId) => joinedId !== activityId);
+      const nextHostedActivities = (user.activitiesHosted ?? []).filter((hostedId) => hostedId !== activityId);
+      updateUser({
+        activitiesJoined: nextJoinedActivities,
+        activitiesHosted: nextHostedActivities,
+      });
+
+      return true;
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to delete hosted activity');
+      return false;
+    }
+  }, [
+    activities,
+    isMockActivity,
+    localJoinedIds,
+    persistLocalJoinStatusHistory,
+    persistLocalJoinedIds,
+    removeActivity,
+    setJoinStatuses,
+    updateUser,
+    user,
+  ]);
+
   const getJoinStatus = useCallback(
     (activityId: string): JoinRequestStatus | null => joinStatuses[activityId] ?? null,
     [joinStatuses]
@@ -761,6 +821,7 @@ export function useActivities() {
     joinActivity,
     leaveActivity,
     deleteRejectedJoin,
+    deleteHostedActivity,
     getJoinStatus,
     canAccessChat,
     getActivity,

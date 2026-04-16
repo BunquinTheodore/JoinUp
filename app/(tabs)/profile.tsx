@@ -13,6 +13,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
+import * as ImagePicker from 'expo-image-picker';
 import { Colors, Typography, Spacing, BorderRadius, Shadows, CategoryColors } from '../../constants/theme';
 import { CategoryChip } from '../../components/ui/CategoryChip';
 import { BottomSheet } from '../../components/ui/BottomSheet';
@@ -55,6 +56,22 @@ function dedupeById(items: HistoryActivity[]) {
   return Array.from(new Map(items.map((item) => [item.id, item])).values());
 }
 
+const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+};
+
 export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -68,6 +85,7 @@ export default function ProfileScreen() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [authActionLoading, setAuthActionLoading] = useState<'switch' | 'logout' | null>(null);
   const [editName, setEditName] = useState(user?.displayName ?? '');
   const [editLocation, setEditLocation] = useState(user?.location ?? '');
@@ -152,6 +170,118 @@ export default function ProfileScreen() {
   useEffect(() => {
     fetchHistory();
   }, [fetchHistory]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    const channel = supabase
+      .channel(`profile-hosted:${user.uid}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'activities',
+          filter: `host_id=eq.${user.uid}`,
+        },
+        () => {
+          void fetchHistory();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [fetchHistory, user?.uid]);
+
+  useEffect(() => {
+    if (!isUploadingPhoto) return;
+
+    const timer = setTimeout(() => {
+      setIsUploadingPhoto(false);
+      Alert.alert('Upload timeout', 'Profile photo upload took too long. Please try again.');
+    }, 30000);
+
+    return () => clearTimeout(timer);
+  }, [isUploadingPhoto]);
+
+  const uploadProfilePhoto = useCallback(async (asset: ImagePicker.ImagePickerAsset): Promise<string> => {
+    const uri = asset.uri;
+    const extension = (uri.split('.').pop() ?? 'jpg').split('?')[0].toLowerCase();
+    const path = `profile-photos/${user?.uid ?? 'anon'}-${Date.now()}.${extension}`;
+
+    let uploadBody: Blob | File;
+    if ((asset as any).file) {
+      // Web returns a native File object; upload it directly to avoid fetch(uri) stalls.
+      uploadBody = (asset as any).file as File;
+    } else {
+      const response = await withTimeout(fetch(uri), 15000, 'Timed out while reading selected image.');
+      uploadBody = await withTimeout(response.blob(), 15000, 'Timed out while preparing selected image.');
+    }
+
+    const { error: uploadError } = await withTimeout(
+      supabase.storage
+        .from('chat-images')
+        .upload(path, uploadBody, {
+          upsert: false,
+          contentType: uploadBody.type || 'image/jpeg',
+        }),
+      20000,
+      'Timed out while uploading profile photo.'
+    );
+
+    if (uploadError) throw uploadError;
+    return supabase.storage.from('chat-images').getPublicUrl(path).data.publicUrl;
+  }, [user?.uid]);
+
+  const handleChangeProfilePhoto = useCallback(async () => {
+    if (!user?.uid) return;
+    if (isUploadingPhoto) return;
+
+    try {
+      setIsUploadingPhoto(true);
+
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permission needed', 'Please allow media access to pick a profile photo.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        quality: 0.85,
+      });
+
+      if (result.canceled || !result.assets?.[0]?.uri) {
+        return;
+      }
+
+      const selectedAsset = result.assets[0];
+      const photoUrl = await uploadProfilePhoto(selectedAsset);
+      const updateResult = await withTimeout(
+        (async () =>
+          supabase
+            .from('profiles')
+            .update({ photo_url: photoUrl })
+            .eq('id', user.uid))(),
+        15000,
+        'Timed out while saving profile photo.'
+      );
+
+      const { error } = updateResult;
+
+      if (error) throw error;
+
+      updateUser({ photoURL: photoUrl });
+      Alert.alert('Updated', 'Profile photo updated successfully.');
+    } catch (error: any) {
+      Alert.alert('Upload failed', error.message ?? 'Could not update profile photo.');
+    } finally {
+      setIsUploadingPhoto(false);
+    }
+  }, [isUploadingPhoto, updateUser, uploadProfilePhoto, user?.uid]);
 
   const handleSaveProfile = useCallback(async () => {
     if (!user?.uid) return;
@@ -310,9 +440,25 @@ export default function ProfileScreen() {
 
         {/* Avatar and info */}
         <View style={styles.profileInfo}>
-          <View style={styles.avatarLarge}>
-            <Ionicons name="person" size={40} color={Colors.white} />
-          </View>
+          <TouchableOpacity
+            style={styles.avatarLarge}
+            onPress={handleChangeProfilePhoto}
+            disabled={isUploadingPhoto}
+            activeOpacity={0.85}
+          >
+            {user?.photoURL ? (
+              <Image source={{ uri: user.photoURL }} style={styles.avatarImage} resizeMode="cover" />
+            ) : (
+              <Ionicons name="person" size={40} color={Colors.white} />
+            )}
+            <View style={styles.avatarCameraBadge}>
+              {isUploadingPhoto ? (
+                <ActivityIndicator size="small" color={Colors.white} />
+              ) : (
+                <Ionicons name="camera" size={14} color={Colors.white} />
+              )}
+            </View>
+          </TouchableOpacity>
           <Text style={styles.displayName}>
             {user?.displayName ?? 'User'}
           </Text>
@@ -670,6 +816,24 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     borderColor: Colors.white,
     marginBottom: Spacing.sm,
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  avatarCameraBadge: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: Colors.accent,
+    borderWidth: 2,
+    borderColor: Colors.white,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   displayName: {
     fontFamily: Typography.bodyBold,

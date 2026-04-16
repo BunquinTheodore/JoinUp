@@ -53,7 +53,7 @@ function mapActivityRow(row: any): Activity {
 export default function ChatListScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { activities, isLoading, joinStatuses, getJoinStatus, canAccessChat, deleteRejectedJoin } = useActivities();
+  const { activities, isLoading, joinStatuses, getJoinStatus, canAccessChat, deleteRejectedJoin, deleteHostedActivity } = useActivities();
   const user = useAuthStore((state) => state.user);
   const [supplementalActivities, setSupplementalActivities] = useState<Record<string, Activity>>({});
   
@@ -231,6 +231,34 @@ export default function ChatListScreen() {
                         if (!removed) {
                           Alert.alert('Delete failed', 'Could not remove this rejected activity.');
                         }
+                      }}
+                    >
+                      <Ionicons name="trash-outline" size={18} color={Colors.error} />
+                    </TouchableOpacity>
+                  ) : isHost ? (
+                    <TouchableOpacity
+                      style={styles.deleteBtn}
+                      onPress={(event) => {
+                        event.stopPropagation();
+                        Alert.alert(
+                          'Delete hosted event',
+                          'This will permanently delete the event and its chat for everyone.',
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                              text: 'Delete',
+                              style: 'destructive',
+                              onPress: async () => {
+                                const deleted = await deleteHostedActivity(item.id);
+                                if (!deleted) {
+                                  Alert.alert('Delete failed', 'Could not delete this hosted event.');
+                                  return;
+                                }
+                                Alert.alert('Deleted', 'Hosted event deleted successfully.');
+                              },
+                            },
+                          ]
+                        );
                       }}
                     >
                       <Ionicons name="trash-outline" size={18} color={Colors.error} />
