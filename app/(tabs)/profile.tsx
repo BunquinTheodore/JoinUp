@@ -166,6 +166,7 @@ export default function ProfileScreen() {
 
     const updates: {
       display_name?: string;
+      location?: string;
       bio?: string;
     } = {};
 
@@ -179,6 +180,10 @@ export default function ProfileScreen() {
       updates.bio = nextBio;
     }
 
+    if (locationChanged) {
+      updates.location = nextLocation;
+    }
+
     if (Object.keys(updates).length === 0 && !locationChanged) {
       setShowEditSheet(false);
       return;
@@ -187,14 +192,12 @@ export default function ProfileScreen() {
     try {
       setSaveLoading(true);
 
-      if (Object.keys(updates).length > 0) {
-        const { error } = await supabase
-          .from('profiles')
-          .update(updates)
-          .eq('id', user.uid);
+      const { error } = await supabase
+        .from('profiles')
+        .update(updates)
+        .eq('id', user.uid);
 
-        if (error) throw error;
-      }
+      if (error) throw error;
 
       const localUpdates: { displayName?: string; location?: string; bio?: string } = {};
 
@@ -213,14 +216,7 @@ export default function ProfileScreen() {
       updateUser(localUpdates);
 
       setShowEditSheet(false);
-      if (locationChanged) {
-        Alert.alert(
-          'Saved with warning',
-          'Name and bio were saved. Location is stored locally and will sync after the latest Supabase migration is applied.'
-        );
-      } else {
-        Alert.alert('Saved', 'Profile updated successfully.');
-      }
+      Alert.alert('Saved', 'Profile updated successfully.');
     } catch (error: any) {
       Alert.alert('Save failed', error.message ?? 'Could not save your profile.');
     } finally {

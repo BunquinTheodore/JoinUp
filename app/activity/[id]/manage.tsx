@@ -26,7 +26,7 @@ export default function ManageActivityScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
-  const { activities, leaveActivity } = useActivities();
+  const { activities, leaveActivity, refetch } = useActivities();
 
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
@@ -87,6 +87,8 @@ export default function ManageActivityScreen() {
 
       if (error) throw error;
 
+      await refetch();
+
       Alert.alert('Success', 'Image added successfully!');
     } catch {
       Alert.alert('Upload failed', 'Could not upload the image. Please try again.');
@@ -114,6 +116,8 @@ export default function ManageActivityScreen() {
                 .eq('id', id);
 
               if (error) throw error;
+
+              await refetch();
 
               Alert.alert('Success', 'Image deleted successfully!');
             } catch {

@@ -40,6 +40,23 @@ type FormErrors = {
   maxSlots?: string;
 };
 
+const isMissingImagesColumnError = (error: unknown): boolean => {
+  const joined = [
+    (error as any)?.code,
+    (error as any)?.message,
+    (error as any)?.details,
+    (error as any)?.hint,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return (
+    joined.includes('pgrst204') ||
+    (joined.includes('schema cache') && joined.includes("'images'") && joined.includes('activities'))
+  );
+};
+
 export default function CreateActivityScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -261,25 +278,38 @@ export default function CreateActivityScreen() {
         }
       }
 
-      const { data, error } = await supabase
+      const insertPayload = {
+        title: title.trim(),
+        description: description.trim(),
+        category,
+        location_name: locationName.trim(),
+        location_lat: locationCoords?.lat ?? 0,
+        location_lng: locationCoords?.lng ?? 0,
+        date_time: date.toISOString(),
+        max_slots: parsedMaxSlots,
+        cover_image: coverImageUrl,
+        images: activityImages,
+        requires_approval: requiresApproval,
+        status: 'active' as const,
+        host_id: user.uid,
+      };
+
+      let { data, error } = await supabase
         .from('activities')
-        .insert({
-          title: title.trim(),
-          description: description.trim(),
-          category,
-          location_name: locationName.trim(),
-          location_lat: locationCoords?.lat ?? 0,
-          location_lng: locationCoords?.lng ?? 0,
-          date_time: date.toISOString(),
-          max_slots: parsedMaxSlots,
-          cover_image: coverImageUrl,
-          images: activityImages,
-          requires_approval: requiresApproval,
-          status: 'active',
-          host_id: user.uid,
-        })
+        .insert(insertPayload)
         .select('id')
         .single();
+
+      if (error && isMissingImagesColumnError(error)) {
+        ({ data, error } = await supabase
+          .from('activities')
+          .insert({
+            ...insertPayload,
+            images: undefined,
+          })
+          .select('id')
+          .single());
+      }
 
       if (error || !data?.id) {
         throw error ?? new Error('Could not create activity.');
@@ -291,8 +321,10 @@ export default function CreateActivityScreen() {
         { text: 'Open activity', onPress: () => router.push(`/activity/${data.id}`) },
         { text: 'Stay here', style: 'cancel' },
       ]);
-    } catch (_err) {
-      Alert.alert('Error', 'Failed to create activity. Please try again.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to create activity. Please try again.';
+      console.error('[create] failed to create activity', err);
+      Alert.alert('Error', message);
     } finally {
       setIsUploadingCover(false);
       setIsSubmitting(false);

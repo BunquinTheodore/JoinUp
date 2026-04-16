@@ -179,7 +179,7 @@ export default function ChatListScreen() {
             const isHost = item.hostId === user?.uid;
             const status = getJoinStatus(item.id);
             const effectiveStatus: JoinRequestStatus | null =
-              isHost ? null : status ?? (joinedIds.has(item.id) ? 'pending' : null);
+              isHost ? null : status ?? (joinedIds.has(item.id) ? 'approved' : null);
             const meta = statusMeta(effectiveStatus, isHost);
             return (
               <Animated.View entering={FadeInDown.delay(index * 50).springify()}>

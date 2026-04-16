@@ -25,6 +25,7 @@ function mapActivity(row: any): Activity {
     hostName: row.host_name ?? '',
     hostPhoto: row.host_photo ?? '',
     coverImage: row.cover_image ?? undefined,
+    images: Array.isArray(row.images) ? row.images : undefined,
     requiresApproval: row.requires_approval,
     reactions: {
       fire: row.reaction_fire ?? 0,
@@ -323,10 +324,10 @@ export function useActivities() {
           return;
         }
 
-        // For mock activities, default to 'approved' since they're persisted only in activitiesJoined
-        // For real activities, if in profile but not in participants table, they're likely rejected
-        // or the join request is still pending on the server. Default to 'pending' to be safe.
-        nextStatuses[activityId] = isMockActivity(activityId) ? 'approved' : 'pending';
+        // For mock activities, default to approved since they are profile-backed only.
+        // For real activities in activities_joined with no participant row, prefer approved
+        // to preserve legacy/previously-joined chat access on refresh.
+        nextStatuses[activityId] = 'approved';
       }
     });
 
@@ -711,10 +712,14 @@ export function useActivities() {
         if (!data) return false;
       }
 
-      // Keep rejected joins in local history so they remain visible after refresh.
-      setJoinStatuses((prev) => ({ ...prev, [activityId]: 'rejected' }));
+      setJoinStatuses((prev) => {
+        const next = { ...prev };
+        delete next[activityId];
+        return next;
+      });
 
-      const nextHistory = { ...localJoinStatusHistoryRef.current, [activityId]: 'rejected' as JoinRequestStatus };
+      const nextHistory = { ...localJoinStatusHistoryRef.current };
+      delete nextHistory[activityId];
       localJoinStatusHistoryRef.current = nextHistory;
       void persistLocalJoinStatusHistory(nextHistory);
 
