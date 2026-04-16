@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -17,20 +17,125 @@ import { useActivities } from '../../hooks/useActivities';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAuthStore } from '../../store/authStore';
 import { getMockChatPreview } from '../../lib/mockChats';
-import type { JoinRequestStatus } from '../../types';
+import { supabase } from '../../lib/supabase';
+import type { Activity, JoinRequestStatus } from '../../types';
+
+function mapActivityRow(row: any): Activity {
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    category: row.category,
+    location: {
+      name: row.location_name,
+      lat: row.location_lat,
+      lng: row.location_lng,
+    },
+    dateTime: row.date_time,
+    maxSlots: row.max_slots,
+    currentSlots: row.current_slots ?? row.max_slots,
+    participants: row.participant_ids ?? [],
+    hostId: row.host_id,
+    hostName: row.host_name ?? '',
+    hostPhoto: row.host_photo ?? '',
+    coverImage: row.cover_image ?? undefined,
+    requiresApproval: row.requires_approval,
+    reactions: {
+      fire: row.reaction_fire ?? 0,
+      heart: row.reaction_heart ?? 0,
+      like: row.reaction_like ?? 0,
+    },
+    status: row.status,
+    createdAt: row.created_at,
+  };
+}
 
 export default function ChatListScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { activities, isLoading, getJoinStatus, canAccessChat, deleteRejectedJoin } = useActivities();
+  const { activities, isLoading, joinStatuses, getJoinStatus, canAccessChat, deleteRejectedJoin } = useActivities();
   const user = useAuthStore((state) => state.user);
-  const joinedIds = new Set(user?.activitiesJoined ?? []);
+  const [supplementalActivities, setSupplementalActivities] = useState<Record<string, Activity>>({});
+  
+  const joinedIds = useMemo(() => new Set(user?.activitiesJoined ?? []), [user?.activitiesJoined]);
 
-  const chatActivities = activities.filter((activity) => {
-    const status = getJoinStatus(activity.id);
-    const isHost = activity.hostId === user?.uid;
-    return Boolean(status) || isHost || joinedIds.has(activity.id);
-  });
+  const chatActivityIds = useMemo(() => {
+    const ids = new Set<string>();
+
+    Object.keys(joinStatuses).forEach((id) => ids.add(id));
+    joinedIds.forEach((id) => ids.add(id));
+    activities
+      .filter((activity) => activity.hostId === user?.uid)
+      .forEach((activity) => ids.add(activity.id));
+
+    return Array.from(ids);
+  }, [activities, joinStatuses, joinedIds, user?.uid]);
+
+  useEffect(() => {
+    const missingIds = chatActivityIds.filter(
+      (activityId) => !activities.some((activity) => activity.id === activityId)
+    );
+
+    if (missingIds.length === 0) {
+      setSupplementalActivities({});
+      return;
+    }
+
+    let isActive = true;
+
+    const fetchSupplementalActivities = async () => {
+      const { data, error } = await supabase
+        .from('activities_full')
+        .select('*')
+        .in('id', missingIds);
+
+      if (error || !isActive) return;
+
+      const byId: Record<string, Activity> = {};
+      (data ?? []).forEach((row: any) => {
+        const mapped = mapActivityRow(row);
+        byId[mapped.id] = mapped;
+      });
+
+      if (isActive) {
+        setSupplementalActivities(byId);
+      }
+    };
+
+    void fetchSupplementalActivities();
+
+    return () => {
+      isActive = false;
+    };
+  }, [activities, chatActivityIds]);
+
+  const allChatActivities = useMemo(() => {
+    const activityMap = new Map<string, Activity>();
+
+    activities.forEach((activity) => {
+      activityMap.set(activity.id, activity);
+    });
+
+    Object.values(supplementalActivities).forEach((activity) => {
+      if (!activityMap.has(activity.id)) {
+        activityMap.set(activity.id, activity);
+      }
+    });
+
+    return Array.from(activityMap.values());
+  }, [activities, supplementalActivities]);
+
+  const chatActivities = useMemo(
+    () =>
+      allChatActivities
+        .filter((activity) => {
+          const status = getJoinStatus(activity.id);
+          const isHost = activity.hostId === user?.uid;
+          return Boolean(status) || isHost || joinedIds.has(activity.id);
+        })
+        .sort((left, right) => new Date(right.dateTime).getTime() - new Date(left.dateTime).getTime()),
+    [allChatActivities, getJoinStatus, joinedIds, user?.uid]
+  );
 
   const statusMeta = (status: JoinRequestStatus | null, isHost: boolean) => {
     if (isHost) {

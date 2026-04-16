@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import type { Activity, JoinRequestStatus } from '../types';
 import { MOCK_ACTIVITIES } from '../lib/mockActivities';
@@ -46,9 +47,54 @@ export function useActivities() {
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [localJoinedIds, setLocalJoinedIds] = useState<string[]>([]);
   const joinStatusesRef = useRef<Record<string, JoinRequestStatus>>({});
   const mockDecisionTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const resolverUnavailableRef = useRef(false);
+
+  const persistLocalJoinedIds = useCallback(async (ids: string[]) => {
+    if (!user?.uid) return;
+
+    try {
+      await AsyncStorage.setItem(`joinedActivities:${user.uid}`, JSON.stringify(ids));
+    } catch {
+      // Best-effort persistence for chat visibility fallback.
+    }
+  }, [user?.uid]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const hydrateLocalJoinedIds = async () => {
+      if (!user?.uid) {
+        if (isActive) {
+          setLocalJoinedIds([]);
+        }
+        return;
+      }
+
+      try {
+        const raw = await AsyncStorage.getItem(`joinedActivities:${user.uid}`);
+        if (!isActive) return;
+
+        const parsed = raw ? JSON.parse(raw) : [];
+        const normalized = Array.isArray(parsed)
+          ? parsed.filter((value): value is string => typeof value === 'string')
+          : [];
+        setLocalJoinedIds(normalized);
+      } catch {
+        if (isActive) {
+          setLocalJoinedIds([]);
+        }
+      }
+    };
+
+    void hydrateLocalJoinedIds();
+
+    return () => {
+      isActive = false;
+    };
+  }, [user?.uid]);
 
   useEffect(() => {
     joinStatusesRef.current = joinStatuses;
@@ -118,13 +164,24 @@ export function useActivities() {
         .eq('id', user.uid);
 
       if (profileError) {
-        throw profileError;
+        if (!joined) {
+          throw profileError;
+        }
+
+        // Preserve chat visibility locally even when profile persistence is temporarily unavailable.
+        updateUser({ activitiesJoined: nextJoined });
+        setLocalJoinedIds(nextJoined);
+        void persistLocalJoinedIds(nextJoined);
+        setError(profileError.message ?? 'Failed to persist joined activity');
+        return nextJoined;
       }
 
       updateUser({ activitiesJoined: nextJoined });
+      setLocalJoinedIds(nextJoined);
+      void persistLocalJoinedIds(nextJoined);
       return nextJoined;
     },
-    [updateUser, user]
+    [persistLocalJoinedIds, updateUser, user]
   );
 
   const fetchJoinStatuses = useCallback(async () => {
@@ -139,12 +196,30 @@ export function useActivities() {
       .eq('user_id', user.uid)
       .neq('status', 'cancelled');
 
+    const joinedIds = Array.from(new Set([...(user.activitiesJoined ?? []), ...localJoinedIds]));
+
+    if (fetchError) {
+      // Preserve known statuses on transient failures so chat access does not flicker.
+      const fallbackStatuses = { ...joinStatusesRef.current };
+
+      joinedIds.forEach((activityId) => {
+        if (!fallbackStatuses[activityId]) {
+          fallbackStatuses[activityId] = isMockActivity(activityId) ? 'approved' : 'pending';
+        }
+      });
+
+      setError(fetchError.message ?? 'Failed to refresh join status');
+      setJoinStatuses(fallbackStatuses);
+      return;
+    }
+
     const nextStatuses: Record<string, JoinRequestStatus> = {};
     (data ?? []).forEach((row: any) => {
       nextStatuses[row.activity_id] = normalizeStatus(row.status);
     });
 
-    const joinedIds = user.activitiesJoined ?? [];
+    // Critical: For each activity in profile's activitiesJoined, ensure it has a join status.
+    // This is especially important on page reload to restore previous joins.
     joinedIds.forEach((activityId) => {
       if (!nextStatuses[activityId]) {
         const previous = joinStatusesRef.current[activityId];
@@ -153,17 +228,15 @@ export function useActivities() {
           return;
         }
 
+        // For mock activities, default to 'approved' since they're persisted only in activitiesJoined
+        // For real activities, if in profile but not in participants table, they're likely rejected
+        // or the join request is still pending on the server. Default to 'pending' to be safe.
         nextStatuses[activityId] = isMockActivity(activityId) ? 'approved' : 'pending';
       }
     });
 
-    if (fetchError) {
-      // Keep UI functional with fallback statuses even if remote fetch briefly fails.
-      setError(fetchError.message ?? 'Failed to refresh join status');
-    }
-
     setJoinStatuses(nextStatuses);
-  }, [isMockActivity, normalizeStatus, user?.activitiesJoined, user?.uid]);
+  }, [isMockActivity, localJoinedIds, normalizeStatus, user?.activitiesJoined, user?.uid]);
 
   const resolveDueJoinRequests = useCallback(async () => {
     if (!user?.uid) return;
@@ -274,6 +347,32 @@ export function useActivities() {
     };
   }, [fetchActivities, fetchJoinStatuses, user?.uid]);
 
+  // Listen to activity status changes to preserve chats even when activities become inactive
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    const activityChannel = supabase
+      .channel('activities:status')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'activities',
+        },
+        () => {
+          // On activity status change, refetch join statuses to preserve chat visibility
+          // for approved activities even if they're no longer 'active'
+          void fetchJoinStatuses();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(activityChannel);
+    };
+  }, [fetchJoinStatuses, user?.uid]);
+
   useEffect(() => {
     if (!user?.uid) return;
 
@@ -312,9 +411,14 @@ export function useActivities() {
         clearTimeout(mockDecisionTimers.current[activityId]);
       }
 
+      // Capture activity at decision time for closure
+      const currentActivity = activities.find((candidate) => candidate.id === activityId);
+
       mockDecisionTimers.current[activityId] = setTimeout(async () => {
         const resolvedStatus = pickApprovalResult();
-        const activity = activities.find((candidate) => candidate.id === activityId);
+
+        // Use captured activity or fallback to lookup (in case store was updated)
+        const activity = currentActivity || activities.find((candidate) => candidate.id === activityId);
 
         if (activity && resolvedStatus === 'approved') {
           updateActivity({
@@ -334,6 +438,10 @@ export function useActivities() {
         delete mockDecisionTimers.current[activityId];
 
         try {
+          // Note: For mock activities, syncJoinedActivities was already called on join.
+          // The approval/rejection only affects the local joinStatuses state. On page reload,
+          // the activity will be found in profile.activitiesJoined and its status will be
+          // restored from joinStatuses (which uses mock approval = 'approved' logic).
           await supabase.from('notifications').insert({
             user_id: userId,
             type: 'approval',
@@ -354,8 +462,6 @@ export function useActivities() {
   );
 
   const joinActivity = useCallback(async (activityId: string, userId: string): Promise<boolean> => {
-    let syncedJoinedProfile = false;
-
     try {
       const existingStatus = joinStatuses[activityId];
       if (existingStatus && existingStatus !== 'cancelled') {
@@ -367,13 +473,8 @@ export function useActivities() {
       if (!currentActivity) return false;
 
       setJoinStatuses((prev) => ({ ...prev, [activityId]: 'pending' }));
-      try {
-        await syncJoinedActivities(activityId, true);
-        syncedJoinedProfile = true;
-      } catch {
-        // Participant insert is source of truth; keep join flow alive even if profile mirror fails.
-      }
 
+      // For real activities, insert into participants table
       if (!isMockActivity(activityId)) {
         const decisionDueAt = new Date(Date.now() + delayRangeMs()).toISOString();
         const { error: joinError } = await supabase
@@ -391,6 +492,7 @@ export function useActivities() {
             throw joinError;
           }
 
+          // Legacy schema fallback
           const { error: fallbackError } = await supabase
             .from('participants')
             .insert({
@@ -405,8 +507,12 @@ export function useActivities() {
           setJoinStatuses((prev) => ({ ...prev, [activityId]: 'approved' }));
         }
       } else {
+        // For mock activities, schedule auto-approval immediately (no DB insert needed)
         void scheduleMockDecision(activityId, userId, currentActivity.title);
       }
+
+      // Persist joined activity IDs so chat visibility survives hook remounts and refreshes.
+      await syncJoinedActivities(activityId, true);
 
       return true;
     } catch (err: any) {
@@ -415,13 +521,6 @@ export function useActivities() {
         delete next[activityId];
         return next;
       });
-      if (syncedJoinedProfile) {
-        try {
-          await syncJoinedActivities(activityId, false);
-        } catch {
-          // Keep original join error as the surfaced failure.
-        }
-      }
       setError(err.message ?? 'Failed to join activity');
       return false;
     }
