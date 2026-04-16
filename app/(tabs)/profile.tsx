@@ -159,23 +159,20 @@ export default function ProfileScreen() {
 
     const updates: {
       display_name?: string;
-      location?: string;
       bio?: string;
     } = {};
 
+    const locationChanged = nextLocation !== (user.location ?? '').trim();
+
     if (nextName !== (user.displayName ?? '').trim()) {
       updates.display_name = nextName;
-    }
-
-    if (nextLocation !== (user.location ?? '').trim()) {
-      updates.location = nextLocation;
     }
 
     if (nextBio !== (user.bio ?? '').trim()) {
       updates.bio = nextBio;
     }
 
-    if (Object.keys(updates).length === 0) {
+    if (Object.keys(updates).length === 0 && !locationChanged) {
       setShowEditSheet(false);
       return;
     }
@@ -183,61 +180,13 @@ export default function ProfileScreen() {
     try {
       setSaveLoading(true);
 
-      const { error } = await supabase
-        .from('profiles')
-        .update(updates)
-        .eq('id', user.uid);
+      if (Object.keys(updates).length > 0) {
+        const { error } = await supabase
+          .from('profiles')
+          .update(updates)
+          .eq('id', user.uid);
 
-      if (error) {
-        const missingLocationMessage = [error.message, error.details, error.hint]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-
-        const isMissingLocationColumn =
-          updates.location !== undefined &&
-          (
-            error.code === 'PGRST204' ||
-            missingLocationMessage.includes("could not find the 'location' column") ||
-            (missingLocationMessage.includes('location') && missingLocationMessage.includes('column'))
-          );
-
-        if (!isMissingLocationColumn) {
-          throw error;
-        }
-
-        const retryUpdates = { ...updates };
-        delete retryUpdates.location;
-
-        if (Object.keys(retryUpdates).length > 0) {
-          const { error: retryError } = await supabase
-            .from('profiles')
-            .update(retryUpdates)
-            .eq('id', user.uid);
-
-          if (retryError) throw retryError;
-        }
-
-        const localFallbackUpdates: { displayName?: string; bio?: string } = {};
-
-        if (retryUpdates.display_name !== undefined) {
-          localFallbackUpdates.displayName = nextName;
-        }
-
-        if (retryUpdates.bio !== undefined) {
-          localFallbackUpdates.bio = nextBio;
-        }
-
-        if (Object.keys(localFallbackUpdates).length > 0) {
-          updateUser(localFallbackUpdates);
-        }
-
-        setShowEditSheet(false);
-        Alert.alert(
-          'Saved with warning',
-          'Name and bio were saved. Location could not be saved because the database schema is missing the location column. Run the latest Supabase migrations to enable location updates.'
-        );
-        return;
+        if (error) throw error;
       }
 
       const localUpdates: { displayName?: string; location?: string; bio?: string } = {};
@@ -246,7 +195,7 @@ export default function ProfileScreen() {
         localUpdates.displayName = nextName;
       }
 
-      if (updates.location !== undefined) {
+      if (locationChanged) {
         localUpdates.location = nextLocation;
       }
 
@@ -257,7 +206,14 @@ export default function ProfileScreen() {
       updateUser(localUpdates);
 
       setShowEditSheet(false);
-      Alert.alert('Saved', 'Profile updated successfully.');
+      if (locationChanged) {
+        Alert.alert(
+          'Saved with warning',
+          'Name and bio were saved. Location is stored locally and will sync after the latest Supabase migration is applied.'
+        );
+      } else {
+        Alert.alert('Saved', 'Profile updated successfully.');
+      }
     } catch (error: any) {
       Alert.alert('Save failed', error.message ?? 'Could not save your profile.');
     } finally {

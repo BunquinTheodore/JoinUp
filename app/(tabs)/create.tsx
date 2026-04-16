@@ -63,46 +63,39 @@ export default function CreateActivityScreen() {
   const [errors, setErrors] = useState<FormErrors>({});
 
   const parsedMaxSlots = useMemo(() => Number.parseInt(maxSlots, 10), [maxSlots]);
-  const minAllowedDate = useMemo(() => new Date(Date.now() + 5 * 60 * 1000), []);
 
   const isValid = useMemo(
     () =>
-      title.trim().length >= 4 &&
-      description.trim().length >= 12 &&
+      title.trim().length > 0 &&
+      description.trim().length > 0 &&
       Boolean(category) &&
-      locationName.trim().length >= 2 &&
+      locationName.trim().length > 0 &&
       Number.isInteger(parsedMaxSlots) &&
-      parsedMaxSlots >= 2 &&
-      parsedMaxSlots <= 100 &&
-      date.getTime() > minAllowedDate.getTime(),
-    [category, date, locationName, minAllowedDate, parsedMaxSlots, title, description]
+      parsedMaxSlots > 0,
+    [category, locationName, parsedMaxSlots, title, description]
   );
 
   const validateForm = (): FormErrors => {
     const nextErrors: FormErrors = {};
 
-    if (title.trim().length < 4) {
-      nextErrors.title = 'Title should be at least 4 characters.';
+    if (title.trim().length === 0) {
+      nextErrors.title = 'Title is required.';
     }
 
-    if (description.trim().length < 12) {
-      nextErrors.description = 'Description should be at least 12 characters.';
+    if (description.trim().length === 0) {
+      nextErrors.description = 'Description is required.';
     }
 
     if (!category) {
       nextErrors.category = 'Select a category.';
     }
 
-    if (locationName.trim().length < 2) {
+    if (locationName.trim().length === 0) {
       nextErrors.location = 'Enter where this event will happen.';
     }
 
-    if (!Number.isInteger(parsedMaxSlots) || parsedMaxSlots < 2 || parsedMaxSlots > 100) {
-      nextErrors.maxSlots = 'Participants must be between 2 and 100.';
-    }
-
-    if (date.getTime() <= minAllowedDate.getTime()) {
-      nextErrors.date = 'Choose a time at least 5 minutes from now.';
+    if (!Number.isInteger(parsedMaxSlots) || parsedMaxSlots <= 0) {
+      nextErrors.maxSlots = 'Enter a valid participant count.';
     }
 
     return nextErrors;

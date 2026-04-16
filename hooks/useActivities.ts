@@ -36,6 +36,42 @@ function mapActivity(row: any): Activity {
   };
 }
 
+let runtimeUserId: string | null = null;
+let runtimeParticipantChannel: any = null;
+let runtimeActivityChannel: any = null;
+let runtimeResolverInterval: ReturnType<typeof setInterval> | null = null;
+let runtimeBootstrapPromise: Promise<void> | null = null;
+let runtimeFetchActivities: (() => Promise<void>) | null = null;
+let runtimeFetchJoinStatuses: (() => Promise<void>) | null = null;
+let runtimeResolveDueJoinRequests: (() => Promise<void>) | null = null;
+let runtimeResolverInFlight = false;
+
+const RESOLVER_INTERVAL_MS = 10000;
+
+function teardownActivitiesRuntime() {
+  if (runtimeParticipantChannel) {
+    void supabase.removeChannel(runtimeParticipantChannel);
+    runtimeParticipantChannel = null;
+  }
+
+  if (runtimeActivityChannel) {
+    void supabase.removeChannel(runtimeActivityChannel);
+    runtimeActivityChannel = null;
+  }
+
+  if (runtimeResolverInterval) {
+    clearInterval(runtimeResolverInterval);
+    runtimeResolverInterval = null;
+  }
+
+  runtimeBootstrapPromise = null;
+  runtimeFetchActivities = null;
+  runtimeFetchJoinStatuses = null;
+  runtimeResolveDueJoinRequests = null;
+  runtimeResolverInFlight = false;
+  runtimeUserId = null;
+}
+
 export function useActivities() {
   const activities = useActivityStore((state) => state.activities);
   const joinStatuses = useActivityStore((state) => state.joinStatuses);
@@ -315,17 +351,44 @@ export function useActivities() {
   }, [mergeActivities, setActivities]);
 
   useEffect(() => {
-    const bootstrap = async () => {
-      await Promise.all([fetchActivities(), fetchJoinStatuses()]);
-    };
+    if (runtimeUserId && runtimeUserId !== user?.uid) {
+      teardownActivitiesRuntime();
+    }
 
-    bootstrap();
-  }, [fetchActivities, fetchJoinStatuses]);
+    if (!user?.uid) {
+      if (runtimeUserId) {
+        teardownActivitiesRuntime();
+      }
+      return;
+    }
+
+    runtimeUserId = user.uid;
+    runtimeFetchActivities = fetchActivities;
+    runtimeFetchJoinStatuses = fetchJoinStatuses;
+    runtimeResolveDueJoinRequests = resolveDueJoinRequests;
+  }, [fetchActivities, fetchJoinStatuses, resolveDueJoinRequests, user?.uid]);
 
   useEffect(() => {
     if (!user?.uid) return;
 
-    const participantChannel = supabase
+    if (!runtimeBootstrapPromise) {
+      runtimeBootstrapPromise = (async () => {
+        await Promise.all([
+          runtimeFetchActivities?.() ?? Promise.resolve(),
+          runtimeFetchJoinStatuses?.() ?? Promise.resolve(),
+        ]);
+      })();
+    }
+
+    void runtimeBootstrapPromise;
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    if (runtimeParticipantChannel) return;
+
+    runtimeParticipantChannel = supabase
       .channel(`participants:user:${user.uid}`)
       .on(
         'postgres_changes',
@@ -336,22 +399,20 @@ export function useActivities() {
           filter: `user_id=eq.${user.uid}`,
         },
         () => {
-          void fetchJoinStatuses();
-          void fetchActivities();
+          void runtimeFetchJoinStatuses?.();
+          void runtimeFetchActivities?.();
         }
       )
       .subscribe();
-
-    return () => {
-      void supabase.removeChannel(participantChannel);
-    };
-  }, [fetchActivities, fetchJoinStatuses, user?.uid]);
+  }, [user?.uid]);
 
   // Listen to activity status changes to preserve chats even when activities become inactive
   useEffect(() => {
     if (!user?.uid) return;
 
-    const activityChannel = supabase
+    if (runtimeActivityChannel) return;
+
+    runtimeActivityChannel = supabase
       .channel('activities:status')
       .on(
         'postgres_changes',
@@ -363,38 +424,33 @@ export function useActivities() {
         () => {
           // On activity status change, refetch join statuses to preserve chat visibility
           // for approved activities even if they're no longer 'active'
-          void fetchJoinStatuses();
+          void runtimeFetchJoinStatuses?.();
         }
       )
       .subscribe();
-
-    return () => {
-      void supabase.removeChannel(activityChannel);
-    };
-  }, [fetchJoinStatuses, user?.uid]);
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!user?.uid) return;
 
-    let isMounted = true;
+    if (runtimeResolverInterval) return;
+
     const resolveNow = async () => {
+      if (runtimeResolverInFlight) return;
+      runtimeResolverInFlight = true;
+
       try {
-        await resolveDueJoinRequests();
+        await runtimeResolveDueJoinRequests?.();
       } catch {
-        if (isMounted) {
-          // Silent fail: resolver polling should not block app usage.
-        }
+        // Silent fail: resolver polling should not block app usage.
+      } finally {
+        runtimeResolverInFlight = false;
       }
     };
 
     void resolveNow();
-    const interval = setInterval(resolveNow, 2000);
-
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, [resolveDueJoinRequests, user?.uid]);
+    runtimeResolverInterval = setInterval(resolveNow, RESOLVER_INTERVAL_MS);
+  }, [user?.uid]);
 
   useEffect(() => {
     return () => {

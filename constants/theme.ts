@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 /* ── Brand tokens ─────────────────────────────────────────── */
 export const Colors = {
   primary: '#1B2D45',
@@ -43,20 +45,30 @@ export const BorderRadius = {
 } as const;
 
 export const Shadows = {
-  card: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  fab: {
-    shadowColor: Colors.accent,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
-  },
+  card: Platform.select({
+    web: {
+      boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.08)',
+    },
+    default: {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.08,
+      shadowRadius: 8,
+      elevation: 3,
+    },
+  }),
+  fab: Platform.select({
+    web: {
+      boxShadow: `0px 4px 8px ${Colors.accent}4D`,
+    },
+    default: {
+      shadowColor: Colors.accent,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.3,
+      shadowRadius: 8,
+      elevation: 6,
+    },
+  }),
 } as const;
 
 export const Categories = [

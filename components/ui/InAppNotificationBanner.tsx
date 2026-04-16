@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Animated, StyleSheet, Text, View } from 'react-native';
+import { Animated, Platform, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../constants/theme';
 
@@ -16,6 +16,7 @@ interface InAppNotificationBannerProps {
 
 export function InAppNotificationBanner({ notification, onHidden }: InAppNotificationBannerProps) {
   const insets = useSafeAreaInsets();
+  const shouldUseNativeDriver = Platform.OS !== 'web';
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(-16)).current;
 
@@ -26,12 +27,12 @@ export function InAppNotificationBanner({ notification, onHidden }: InAppNotific
       Animated.timing(opacity, {
         toValue: 1,
         duration: 220,
-        useNativeDriver: true,
+        useNativeDriver: shouldUseNativeDriver,
       }),
       Animated.timing(translateY, {
         toValue: 0,
         duration: 220,
-        useNativeDriver: true,
+        useNativeDriver: shouldUseNativeDriver,
       }),
     ]);
 
@@ -39,12 +40,12 @@ export function InAppNotificationBanner({ notification, onHidden }: InAppNotific
       Animated.timing(opacity, {
         toValue: 0,
         duration: 220,
-        useNativeDriver: true,
+        useNativeDriver: shouldUseNativeDriver,
       }),
       Animated.timing(translateY, {
         toValue: -10,
         duration: 220,
-        useNativeDriver: true,
+        useNativeDriver: shouldUseNativeDriver,
       }),
     ]);
 
@@ -58,17 +59,17 @@ export function InAppNotificationBanner({ notification, onHidden }: InAppNotific
     return () => {
       clearTimeout(timer);
     };
-  }, [notification, onHidden, opacity, translateY]);
+  }, [notification, onHidden, opacity, shouldUseNativeDriver, translateY]);
 
   if (!notification) return null;
 
   return (
     <Animated.View
-      pointerEvents="none"
       style={[
         styles.wrapper,
         {
           top: insets.top + Spacing.sm,
+          pointerEvents: 'none',
           opacity,
           transform: [{ translateY }],
         },

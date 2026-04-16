@@ -84,7 +84,32 @@ export default function NotificationsScreen() {
           table: 'notifications',
           filter: `user_id=eq.${user.uid}`,
         },
-        () => {
+        (payload: any) => {
+          if (payload.eventType === 'INSERT' && payload.new) {
+            setNotifications((prev) => {
+              const incoming = mapNotification(payload.new);
+              if (prev.some((item) => item.id === incoming.id)) {
+                return prev;
+              }
+              return [incoming, ...prev];
+            });
+            return;
+          }
+
+          if (payload.eventType === 'UPDATE' && payload.new) {
+            setNotifications((prev) =>
+              prev.map((item) =>
+                item.id === payload.new.id ? mapNotification(payload.new) : item
+              )
+            );
+            return;
+          }
+
+          if (payload.eventType === 'DELETE' && payload.old?.id) {
+            setNotifications((prev) => prev.filter((item) => item.id !== payload.old.id));
+            return;
+          }
+
           void fetchNotifications();
         }
       )
