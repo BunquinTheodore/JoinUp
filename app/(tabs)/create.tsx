@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -9,62 +9,283 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
 import { InputField } from '../../components/ui/InputField';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
 import { CategoryChip } from '../../components/ui/CategoryChip';
 import { useAuthStore } from '../../store/authStore';
+import { supabase } from '../../lib/supabase';
+import { useActivities } from '../../hooks/useActivities';
+import type { Activity } from '../../types';
 import { format } from 'date-fns';
 
 const CATEGORIES = ['Fitness', 'Study', 'Café', 'Outdoors', 'Gaming', 'Social', 'Food', 'Other'];
+type Category = Activity['category'];
+
+type FormErrors = {
+  title?: string;
+  description?: string;
+  category?: string;
+  location?: string;
+  date?: string;
+  maxSlots?: string;
+};
 
 export default function CreateActivityScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
+  const { refetch } = useActivities();
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [category, setCategory] = useState('');
+  const [category, setCategory] = useState<Category | ''>('');
   const [locationName, setLocationName] = useState('');
   const [maxSlots, setMaxSlots] = useState('8');
   const [requiresApproval, setRequiresApproval] = useState(false);
-  const [date, setDate] = useState(new Date());
+  const [date, setDate] = useState(new Date(Date.now() + 60 * 60 * 1000));
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isUploadingCover, setIsUploadingCover] = useState(false);
+  const [isFetchingLocation, setIsFetchingLocation] = useState(false);
+  const [coverLocalUri, setCoverLocalUri] = useState<string | null>(null);
+  const [locationCoords, setLocationCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [errors, setErrors] = useState<FormErrors>({});
 
-  const isValid =
-    title.trim() &&
-    description.trim() &&
-    category &&
-    locationName.trim() &&
-    parseInt(maxSlots) > 0;
+  const parsedMaxSlots = useMemo(() => Number.parseInt(maxSlots, 10), [maxSlots]);
+  const minAllowedDate = useMemo(() => new Date(Date.now() + 5 * 60 * 1000), []);
+
+  const isValid = useMemo(
+    () =>
+      title.trim().length >= 4 &&
+      description.trim().length >= 12 &&
+      Boolean(category) &&
+      locationName.trim().length >= 2 &&
+      Number.isInteger(parsedMaxSlots) &&
+      parsedMaxSlots >= 2 &&
+      parsedMaxSlots <= 100 &&
+      date.getTime() > minAllowedDate.getTime(),
+    [category, date, locationName, minAllowedDate, parsedMaxSlots, title, description]
+  );
+
+  const validateForm = (): FormErrors => {
+    const nextErrors: FormErrors = {};
+
+    if (title.trim().length < 4) {
+      nextErrors.title = 'Title should be at least 4 characters.';
+    }
+
+    if (description.trim().length < 12) {
+      nextErrors.description = 'Description should be at least 12 characters.';
+    }
+
+    if (!category) {
+      nextErrors.category = 'Select a category.';
+    }
+
+    if (locationName.trim().length < 2) {
+      nextErrors.location = 'Enter where this event will happen.';
+    }
+
+    if (!Number.isInteger(parsedMaxSlots) || parsedMaxSlots < 2 || parsedMaxSlots > 100) {
+      nextErrors.maxSlots = 'Participants must be between 2 and 100.';
+    }
+
+    if (date.getTime() <= minAllowedDate.getTime()) {
+      nextErrors.date = 'Choose a time at least 5 minutes from now.';
+    }
+
+    return nextErrors;
+  };
+
+  const uploadCoverImage = async (uri: string): Promise<string> => {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    const extension = (uri.split('.').pop() ?? 'jpg').split('?')[0].toLowerCase();
+    const path = `activity-covers/${user?.uid ?? 'anon'}-${Date.now()}.${extension}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('chat-images')
+      .upload(path, blob, {
+        upsert: false,
+        contentType: blob.type || 'image/jpeg',
+      });
+
+    if (uploadError) {
+      throw uploadError;
+    }
+
+    return supabase.storage.from('chat-images').getPublicUrl(path).data.publicUrl;
+  };
 
   const handleUseMyLocation = async () => {
-    // Mock reverse geocode
-    setLocationName('San Francisco, CA');
+    try {
+      setIsFetchingLocation(true);
+      const permission = await Location.requestForegroundPermissionsAsync();
+
+      if (permission.status !== 'granted') {
+        Alert.alert('Permission needed', 'Please allow location access to autofill this field.');
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      const geocoded = await Location.reverseGeocodeAsync({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      });
+
+      const first = geocoded[0];
+      const labelParts = [first?.name, first?.district, first?.city, first?.region, first?.country]
+        .filter(Boolean);
+
+      setLocationCoords({
+        lat: position.coords.latitude,
+        lng: position.coords.longitude,
+      });
+      setLocationName(labelParts.length > 0 ? labelParts.join(', ') : 'Current location');
+      setErrors((prev) => ({ ...prev, location: undefined }));
+    } catch {
+      Alert.alert('Location unavailable', 'Could not fetch your current location.');
+    } finally {
+      setIsFetchingLocation(false);
+    }
   };
 
   const handleImagePick = async () => {
-    Alert.alert('Image Picker', 'Cover image picker would open here.');
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Permission needed', 'Please allow media access to pick a cover image.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.85,
+      });
+
+      if (result.canceled || !result.assets?.[0]?.uri) {
+        return;
+      }
+
+      setCoverLocalUri(result.assets[0].uri);
+    } catch {
+      Alert.alert('Image unavailable', 'Could not select this image right now.');
+    }
+  };
+
+  const handleDateChange = (_event: DateTimePickerEvent, selectedDate?: Date) => {
+    if (!selectedDate) {
+      setShowDatePicker(false);
+      return;
+    }
+
+    if (Platform.OS === 'android') {
+      if (pickerMode === 'date') {
+        const next = new Date(date);
+        next.setFullYear(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+        setDate(next);
+        setPickerMode('time');
+        setShowDatePicker(true);
+        return;
+      }
+
+      const next = new Date(date);
+      next.setHours(selectedDate.getHours(), selectedDate.getMinutes(), 0, 0);
+      setDate(next);
+      setShowDatePicker(false);
+      return;
+    }
+
+    setDate(selectedDate);
+  };
+
+  const openDateTimePicker = () => {
+    if (Platform.OS === 'android') {
+      setPickerMode('date');
+      setShowDatePicker(true);
+      return;
+    }
+
+    setShowDatePicker((prev) => !prev);
   };
 
   const handleSubmit = async () => {
-    if (!isValid) return;
+    if (!user?.uid) {
+      Alert.alert('Sign in required', 'Please sign in before creating an activity.');
+      return;
+    }
+
+    const validationErrors = validateForm();
+    setErrors(validationErrors);
+
+    if (Object.keys(validationErrors).length > 0) {
+      Alert.alert('Missing details', 'Please review the highlighted fields.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      // Mock submission
-      await new Promise((r) => setTimeout(r, 1500));
+      let coverImageUrl: string | null = null;
+
+      if (coverLocalUri) {
+        setIsUploadingCover(true);
+        try {
+          coverImageUrl = await uploadCoverImage(coverLocalUri);
+        } catch {
+          Alert.alert('Cover upload failed', 'The activity will still be created without a cover photo.');
+        } finally {
+          setIsUploadingCover(false);
+        }
+      }
+
+      const { data, error } = await supabase
+        .from('activities')
+        .insert({
+          title: title.trim(),
+          description: description.trim(),
+          category,
+          location_name: locationName.trim(),
+          location_lat: locationCoords?.lat ?? 0,
+          location_lng: locationCoords?.lng ?? 0,
+          date_time: date.toISOString(),
+          max_slots: parsedMaxSlots,
+          cover_image: coverImageUrl,
+          requires_approval: requiresApproval,
+          status: 'active',
+          host_id: user.uid,
+        })
+        .select('id')
+        .single();
+
+      if (error || !data?.id) {
+        throw error ?? new Error('Could not create activity.');
+      }
+
+      await refetch();
+
       Alert.alert('Success', 'Activity created successfully!', [
-        { text: 'OK', onPress: () => router.back() },
+        { text: 'Open activity', onPress: () => router.push(`/activity/${data.id}`) },
+        { text: 'Stay here', style: 'cancel' },
       ]);
-    } catch (err) {
+    } catch (_err) {
       Alert.alert('Error', 'Failed to create activity. Please try again.');
     } finally {
+      setIsUploadingCover(false);
       setIsSubmitting(false);
     }
   };
@@ -88,8 +309,14 @@ export default function CreateActivityScreen() {
         {/* Cover image */}
         <Animated.View entering={FadeInDown.delay(150).springify()}>
           <TouchableOpacity style={styles.coverUpload} onPress={handleImagePick}>
-            <Ionicons name="camera-outline" size={32} color={Colors.slate} />
-            <Text style={styles.coverText}>Add Cover Photo</Text>
+            {coverLocalUri ? (
+              <Image source={{ uri: coverLocalUri }} style={styles.coverPreview} resizeMode="cover" />
+            ) : (
+              <>
+                <Ionicons name="camera-outline" size={32} color={Colors.slate} />
+                <Text style={styles.coverText}>Add Cover Photo</Text>
+              </>
+            )}
           </TouchableOpacity>
         </Animated.View>
 
@@ -98,7 +325,13 @@ export default function CreateActivityScreen() {
             label="Activity Title"
             placeholder="Give it a catchy name"
             value={title}
-            onChangeText={setTitle}
+            onChangeText={(value) => {
+              setTitle(value);
+              if (errors.title) {
+                setErrors((prev) => ({ ...prev, title: undefined }));
+              }
+            }}
+            error={errors.title}
           />
         </Animated.View>
 
@@ -107,10 +340,16 @@ export default function CreateActivityScreen() {
             label="Description"
             placeholder="What's the plan?"
             value={description}
-            onChangeText={setDescription}
+            onChangeText={(value) => {
+              setDescription(value);
+              if (errors.description) {
+                setErrors((prev) => ({ ...prev, description: undefined }));
+              }
+            }}
             multiline
             numberOfLines={4}
             style={styles.textArea}
+            error={errors.description}
           />
         </Animated.View>
 
@@ -123,11 +362,17 @@ export default function CreateActivityScreen() {
                 key={cat}
                 label={cat}
                 selected={category === cat}
-                onPress={() => setCategory(cat)}
+                onPress={() => {
+                  setCategory(cat as Category);
+                  if (errors.category) {
+                    setErrors((prev) => ({ ...prev, category: undefined }));
+                  }
+                }}
                 size="sm"
               />
             ))}
           </View>
+          {errors.category ? <Text style={styles.inlineError}>{errors.category}</Text> : null}
         </Animated.View>
 
         {/* Location */}
@@ -136,26 +381,46 @@ export default function CreateActivityScreen() {
             label="Location"
             placeholder="Where is it happening?"
             value={locationName}
-            onChangeText={setLocationName}
+            onChangeText={(value) => {
+              setLocationName(value);
+              setLocationCoords(null);
+              if (errors.location) {
+                setErrors((prev) => ({ ...prev, location: undefined }));
+              }
+            }}
+            error={errors.location}
           />
           <TouchableOpacity
             style={styles.useLocationBtn}
             onPress={handleUseMyLocation}
+            disabled={isFetchingLocation}
           >
             <Ionicons name="navigate-outline" size={16} color={Colors.accent} />
-            <Text style={styles.useLocationText}>Use my location</Text>
+            <Text style={styles.useLocationText}>
+              {isFetchingLocation ? 'Getting location...' : 'Use my location'}
+            </Text>
           </TouchableOpacity>
         </Animated.View>
 
         {/* Date and Time */}
         <Animated.View entering={FadeInDown.delay(400).springify()}>
           <Text style={styles.fieldLabel}>Date & Time</Text>
-          <TouchableOpacity style={styles.dateBtn}>
+          <TouchableOpacity style={styles.dateBtn} onPress={openDateTimePicker}>
             <Ionicons name="calendar-outline" size={18} color={Colors.accent} />
             <Text style={styles.dateBtnText}>
               {format(date, 'EEEE, MMMM d, yyyy · h:mm a')}
             </Text>
           </TouchableOpacity>
+          {errors.date ? <Text style={styles.inlineError}>{errors.date}</Text> : null}
+          {showDatePicker ? (
+            <DateTimePicker
+              value={date}
+              mode={Platform.OS === 'ios' ? 'datetime' : pickerMode}
+              minimumDate={new Date()}
+              display={Platform.OS === 'ios' ? 'inline' : 'default'}
+              onChange={handleDateChange}
+            />
+          ) : null}
         </Animated.View>
 
         {/* Max slots */}
@@ -164,8 +429,15 @@ export default function CreateActivityScreen() {
             label="Max Participants"
             placeholder="8"
             value={maxSlots}
-            onChangeText={setMaxSlots}
+            onChangeText={(value) => {
+              const cleaned = value.replace(/[^0-9]/g, '');
+              setMaxSlots(cleaned);
+              if (errors.maxSlots) {
+                setErrors((prev) => ({ ...prev, maxSlots: undefined }));
+              }
+            }}
             keyboardType="number-pad"
+            error={errors.maxSlots}
           />
         </Animated.View>
 
@@ -191,7 +463,7 @@ export default function CreateActivityScreen() {
           <PrimaryButton
             title="Create Activity"
             onPress={handleSubmit}
-            loading={isSubmitting}
+            loading={isSubmitting || isUploadingCover}
             disabled={!isValid}
             style={styles.submitBtn}
           />
@@ -234,6 +506,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: Spacing.lg,
     gap: Spacing.sm,
+  },
+  coverPreview: {
+    width: '100%',
+    height: '100%',
+    borderRadius: BorderRadius.card,
   },
   coverText: {
     fontFamily: Typography.bodyMed,
@@ -284,6 +561,13 @@ const styles = StyleSheet.create({
     fontFamily: Typography.body,
     fontSize: 15,
     color: Colors.text,
+  },
+  inlineError: {
+    fontFamily: Typography.body,
+    fontSize: 12,
+    color: Colors.danger,
+    marginTop: -Spacing.xs,
+    marginBottom: Spacing.sm,
   },
   switchRow: {
     flexDirection: 'row',
