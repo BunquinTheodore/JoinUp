@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Image,
   Dimensions,
+  Pressable,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,11 +23,58 @@ import { format } from 'date-fns';
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = width - Spacing.lg * 2;
 
+type PlaceOption = {
+  label: string;
+  keywords: string[];
+};
+
+const PHILIPPINE_PLACES: PlaceOption[] = [
+  { label: 'All Philippines', keywords: [] },
+  { label: 'Batangas City', keywords: ['batangas city'] },
+  { label: 'Manila', keywords: ['manila', 'intramuros', 'luneta', 'rizal park', 'binondo', 'escolta'] },
+  { label: 'Makati', keywords: ['makati', 'poblacion', 'little tokyo'] },
+  { label: 'Quezon City', keywords: ['quezon city', 'up diliman'] },
+  { label: 'Taguig / BGC', keywords: ['taguig', 'bgc'] },
+  { label: 'Paranaque', keywords: ['paranaque', 'baclaran'] },
+  { label: 'Batangas (Province)', keywords: ['batangas', 'bauan', 'mt. maculot', 'taal'] },
+];
+
 export default function ExploreScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { activities, isLoading } = useActivities();
   const { location } = useLocation();
+  const [showPlaceDropdown, setShowPlaceDropdown] = useState(false);
+  const [selectedPlace, setSelectedPlace] = useState('All Philippines');
+
+  useEffect(() => {
+    if (!location?.city) return;
+
+    const city = location.city.toLowerCase();
+    const matched = PHILIPPINE_PLACES.find(
+      (place) => place.label !== 'All Philippines' && place.keywords.some((keyword) => keyword.includes(city))
+    );
+
+    if (matched) {
+      setSelectedPlace(matched.label);
+    }
+  }, [location?.city]);
+
+  const selectedPlaceOption = useMemo(
+    () => PHILIPPINE_PLACES.find((place) => place.label === selectedPlace) ?? PHILIPPINE_PLACES[0],
+    [selectedPlace]
+  );
+
+  const filteredActivities = useMemo(() => {
+    if (selectedPlaceOption.label === 'All Philippines') {
+      return activities;
+    }
+
+    return activities.filter((activity) => {
+      const haystack = `${activity.location.name} ${activity.title}`.toLowerCase();
+      return selectedPlaceOption.keywords.some((keyword) => haystack.includes(keyword));
+    });
+  }, [activities, selectedPlaceOption]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -41,14 +89,45 @@ export default function ExploreScreen() {
         }
       />
 
-      {/* Location pill */}
-      <TouchableOpacity style={styles.locationPill}>
-        <Ionicons name="location" size={16} color={Colors.success} />
-        <Text style={styles.locationText}>
-          {location ? `${location.city}, ${location.state}` : 'Loading...'}
-        </Text>
-        <Ionicons name="chevron-down" size={14} color={Colors.slate} />
-      </TouchableOpacity>
+      {/* Location dropdown */}
+      <View style={styles.locationWrap}>
+        <TouchableOpacity
+          style={styles.locationPill}
+          activeOpacity={0.85}
+          onPress={() => setShowPlaceDropdown((prev) => !prev)}
+        >
+          <Ionicons name="location" size={16} color={Colors.success} />
+          <Text style={styles.locationText}>{selectedPlace}</Text>
+          <Ionicons name={showPlaceDropdown ? 'chevron-up' : 'chevron-down'} size={14} color={Colors.slate} />
+        </TouchableOpacity>
+
+        {showPlaceDropdown ? (
+          <View style={[styles.placeDropdown, Shadows.card]}>
+            {PHILIPPINE_PLACES.map((place) => {
+              const active = place.label === selectedPlace;
+              return (
+                <TouchableOpacity
+                  key={place.label}
+                  style={[styles.placeItem, active && styles.placeItemActive]}
+                  onPress={() => {
+                    setSelectedPlace(place.label);
+                    setShowPlaceDropdown(false);
+                  }}
+                >
+                  <Text style={[styles.placeItemText, active && styles.placeItemTextActive]}>{place.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        ) : null}
+      </View>
+
+      {showPlaceDropdown ? (
+        <Pressable
+          style={styles.dropdownBackdrop}
+          onPress={() => setShowPlaceDropdown(false)}
+        />
+      ) : null}
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -60,7 +139,9 @@ export default function ExploreScreen() {
         {isLoading ? (
           <ActivityIndicator size="large" color={Colors.accent} style={styles.loader} />
         ) : (
-          activities.map((activity, index) => {
+          filteredActivities.length === 0 ? (
+            <Text style={styles.emptyText}>No activities found for this place yet.</Text>
+          ) : filteredActivities.map((activity, index) => {
             const chipColor = CategoryColors[activity.category] ?? Colors.accent;
             const joined = activity.maxSlots - activity.currentSlots;
             const dateStr = activity.dateTime
@@ -150,13 +231,55 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  locationWrap: {
+    position: 'relative',
+    marginLeft: Spacing.lg,
+    marginBottom: Spacing.md,
+    alignSelf: 'flex-start',
+    zIndex: 30,
+  },
   locationPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
-    marginLeft: Spacing.lg,
-    marginBottom: Spacing.md,
+    backgroundColor: Colors.white,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    borderRadius: BorderRadius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     gap: 4,
+  },
+  placeDropdown: {
+    position: 'absolute',
+    top: 40,
+    left: 0,
+    backgroundColor: Colors.white,
+    borderRadius: BorderRadius.card,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    minWidth: 210,
+    overflow: 'hidden',
+    zIndex: 31,
+  },
+  dropdownBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 25,
+  },
+  placeItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  placeItemActive: {
+    backgroundColor: Colors.accent + '14',
+  },
+  placeItemText: {
+    fontFamily: Typography.body,
+    fontSize: 14,
+    color: Colors.text,
+  },
+  placeItemTextActive: {
+    color: Colors.accent,
+    fontFamily: Typography.bodyMed,
   },
   locationText: {
     fontFamily: Typography.bodyMed,
@@ -175,6 +298,13 @@ const styles = StyleSheet.create({
   },
   loader: {
     marginTop: Spacing.xl * 2,
+  },
+  emptyText: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.md,
+    color: Colors.slate,
+    fontFamily: Typography.body,
+    fontSize: 14,
   },
   exploreCard: {
     backgroundColor: Colors.white,
