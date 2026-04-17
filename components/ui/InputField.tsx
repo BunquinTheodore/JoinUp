@@ -6,6 +6,7 @@ import {
   StyleSheet,
   ViewStyle,
   TextInputProps,
+  TouchableOpacity,
 } from 'react-native';
 import { Colors, Typography, BorderRadius, Spacing } from '../../constants/theme';
 
@@ -13,12 +14,14 @@ interface InputFieldProps extends TextInputProps {
   label: string;
   error?: string;
   containerStyle?: ViewStyle;
+  rightAccessory?: React.ReactNode;
 }
 
 export function InputField({
   label,
   error,
   containerStyle,
+  rightAccessory,
   ...props
 }: InputFieldProps) {
   const [isFocused, setIsFocused] = useState(false);
@@ -26,17 +29,21 @@ export function InputField({
   return (
     <View style={[styles.container, containerStyle]}>
       <Text style={styles.label}>{label}</Text>
-      <TextInput
-        style={[
-          styles.input,
-          isFocused && styles.inputFocused,
-          error ? styles.inputError : null,
-        ]}
-        placeholderTextColor={Colors.slate}
-        onFocus={() => setIsFocused(true)}
-        onBlur={() => setIsFocused(false)}
-        {...props}
-      />
+      <View style={styles.inputRow}>
+        <TextInput
+          style={[
+            styles.input,
+            rightAccessory ? styles.inputWithAccessory : null,
+            isFocused && styles.inputFocused,
+            error ? styles.inputError : null,
+          ]}
+          placeholderTextColor={Colors.slate}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+          {...props}
+        />
+        {rightAccessory ? <View style={styles.accessoryWrap}>{rightAccessory}</View> : null}
+      </View>
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </View>
   );
@@ -52,6 +59,9 @@ const styles = StyleSheet.create({
     color: Colors.text,
     marginBottom: Spacing.xs,
   },
+  inputRow: {
+    position: 'relative',
+  },
   input: {
     backgroundColor: Colors.white,
     borderWidth: 1.5,
@@ -59,16 +69,29 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.input,
     paddingHorizontal: Spacing.md,
     paddingVertical: 14,
+    paddingRight: 48,
     fontFamily: Typography.body,
     fontSize: 16,
     color: Colors.text,
     minHeight: 48,
+  },
+  inputWithAccessory: {
+    paddingRight: 48,
   },
   inputFocused: {
     borderColor: Colors.accent,
   },
   inputError: {
     borderColor: Colors.danger,
+  },
+  accessoryWrap: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   errorText: {
     fontFamily: Typography.body,

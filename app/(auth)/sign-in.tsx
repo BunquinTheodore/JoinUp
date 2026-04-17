@@ -11,6 +11,7 @@ import {
 import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing } from '../../constants/theme';
 import { InputField } from '../../components/ui/InputField';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
@@ -24,6 +25,7 @@ export default function SignInScreen() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleSignIn = async () => {
     if (!email.trim() || !password.trim()) return;
@@ -81,7 +83,21 @@ export default function SignInScreen() {
             placeholder="Enter your password"
             value={password}
             onChangeText={setPassword}
-            secureTextEntry
+            secureTextEntry={!showPassword}
+            rightAccessory={
+              <TouchableOpacity
+                onPress={() => setShowPassword((prev) => !prev)}
+                accessibilityRole="button"
+                accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                style={styles.passwordToggle}
+              >
+                <Ionicons
+                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                  size={20}
+                  color={Colors.slate}
+                />
+              </TouchableOpacity>
+            }
           />
         </Animated.View>
 
@@ -186,6 +202,12 @@ const styles = StyleSheet.create({
     fontFamily: Typography.bodyMed,
     fontSize: 14,
     color: Colors.accent,
+  },
+  passwordToggle: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   signInBtn: {
     marginBottom: Spacing.lg,
