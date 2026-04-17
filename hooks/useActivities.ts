@@ -736,17 +736,18 @@ export function useActivities() {
 
     try {
       const currentActivity = activities.find((activity) => activity.id === activityId);
-      if (!currentActivity) return false;
-      if (currentActivity.hostId !== user.uid) return false;
+      if (currentActivity && currentActivity.hostId !== user.uid) return false;
 
       if (!isMockActivity(activityId)) {
-        const { error: deleteError } = await supabase
+        const { data: deletedRows, error: deleteError } = await supabase
           .from('activities')
           .delete()
+          .select('id')
           .eq('id', activityId)
           .eq('host_id', user.uid);
 
         if (deleteError) throw deleteError;
+        if (!deletedRows || deletedRows.length === 0) return false;
       }
 
       removeActivity(activityId);

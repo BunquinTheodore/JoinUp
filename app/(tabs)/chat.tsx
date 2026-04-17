@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -153,6 +154,67 @@ export default function ChatListScreen() {
     return { label: 'Chat unlocked', color: Colors.success, locked: false };
   };
 
+  const openChatOrShowLock = (activityId: string, hostId: string | undefined, effectiveStatus: JoinRequestStatus | null) => {
+    if (canAccessChat(activityId, hostId)) {
+      router.push(`/chat/${activityId}`);
+      return;
+    }
+
+    Alert.alert(
+      'Chat locked',
+      effectiveStatus === 'rejected'
+        ? 'Your join request was not approved for this activity.'
+        : 'Your join request is still pending approval.'
+    );
+  };
+
+  const removeFromSupplemental = (activityId: string) => {
+    setSupplementalActivities((prev) => {
+      if (!prev[activityId]) return prev;
+      const next = { ...prev };
+      delete next[activityId];
+      return next;
+    });
+  };
+
+  const executeHostedDelete = async (activityId: string) => {
+    const deleted = await deleteHostedActivity(activityId);
+    if (!deleted) {
+      Alert.alert('Delete failed', 'Could not delete this hosted event.');
+      return;
+    }
+
+    removeFromSupplemental(activityId);
+    Alert.alert('Deleted', 'Hosted event deleted successfully.');
+  };
+
+  const confirmHostedDelete = (activityId: string) => {
+    if (Platform.OS === 'web') {
+      const confirmed = typeof globalThis.confirm === 'function'
+        ? globalThis.confirm('Delete this hosted event permanently for everyone?')
+        : true;
+
+      if (!confirmed) return;
+      void executeHostedDelete(activityId);
+      return;
+    }
+
+    Alert.alert(
+      'Delete hosted event',
+      'This will permanently delete the event and its chat for everyone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            void executeHostedDelete(activityId);
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
@@ -183,90 +245,63 @@ export default function ChatListScreen() {
             const meta = statusMeta(effectiveStatus, isHost);
             return (
               <Animated.View entering={FadeInDown.delay(index * 50).springify()}>
-                <TouchableOpacity
-                  style={[styles.chatItem, Shadows.card]}
-                  onPress={() => {
-                    if (canAccessChat(item.id, item.hostId)) {
-                      router.push(`/chat/${item.id}`);
-                      return;
-                    }
-
-                    Alert.alert(
-                      'Chat locked',
-                      effectiveStatus === 'rejected'
-                        ? 'Your join request was not approved for this activity.'
-                        : 'Your join request is still pending approval.'
-                    );
-                  }}
-                  activeOpacity={0.9}
-                >
-                  <View style={[styles.chatIcon, { backgroundColor: chipColor + '20' }]}>
-                    <Ionicons
-                      name={meta.locked ? 'lock-closed' : 'chatbubble'}
-                      size={20}
-                      color={meta.locked ? Colors.slate : chipColor}
-                    />
-                  </View>
-                  <View style={styles.chatInfo}>
-                    <Text style={styles.chatTitle} numberOfLines={1}>
-                      {item.title}
-                    </Text>
-                    <Text style={styles.chatSubtitle} numberOfLines={1}>
-                      {meta.locked
-                        ? meta.label
-                        : preview
-                          ? `${preview.senderName}: ${preview.text}`
-                          : `${item.participants.length} participants`}
-                    </Text>
-                    <View style={[styles.statusPill, { backgroundColor: meta.color + '1A' }]}>
-                      <Text style={[styles.statusText, { color: meta.color }]}>{meta.label}</Text>
+                <View style={[styles.chatItem, Shadows.card]}>
+                  <TouchableOpacity
+                    style={styles.chatMainPress}
+                    onPress={() => openChatOrShowLock(item.id, item.hostId, effectiveStatus)}
+                    activeOpacity={0.9}
+                  >
+                    <View style={[styles.chatIcon, { backgroundColor: chipColor + '20' }]}>
+                      <Ionicons
+                        name={meta.locked ? 'lock-closed' : 'chatbubble'}
+                        size={20}
+                        color={meta.locked ? Colors.slate : chipColor}
+                      />
                     </View>
-                  </View>
+                    <View style={styles.chatInfo}>
+                      <Text style={styles.chatTitle} numberOfLines={1}>
+                        {item.title}
+                      </Text>
+                      <Text style={styles.chatSubtitle} numberOfLines={1}>
+                        {meta.locked
+                          ? meta.label
+                          : preview
+                            ? `${preview.senderName}: ${preview.text}`
+                            : `${item.participants.length} participants`}
+                      </Text>
+                      <View style={[styles.statusPill, { backgroundColor: meta.color + '1A' }]}>
+                        <Text style={[styles.statusText, { color: meta.color }]}>{meta.label}</Text>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+
                   {effectiveStatus === 'rejected' && !isHost ? (
                     <TouchableOpacity
                       style={styles.deleteBtn}
-                      onPress={async (event) => {
-                        event.stopPropagation();
+                      onPress={async () => {
                         const removed = await deleteRejectedJoin(item.id);
                         if (!removed) {
                           Alert.alert('Delete failed', 'Could not remove this rejected activity.');
                         }
                       }}
+                      activeOpacity={0.8}
                     >
                       <Ionicons name="trash-outline" size={18} color={Colors.error} />
                     </TouchableOpacity>
                   ) : isHost ? (
                     <TouchableOpacity
                       style={styles.deleteBtn}
-                      onPress={(event) => {
-                        event.stopPropagation();
-                        Alert.alert(
-                          'Delete hosted event',
-                          'This will permanently delete the event and its chat for everyone.',
-                          [
-                            { text: 'Cancel', style: 'cancel' },
-                            {
-                              text: 'Delete',
-                              style: 'destructive',
-                              onPress: async () => {
-                                const deleted = await deleteHostedActivity(item.id);
-                                if (!deleted) {
-                                  Alert.alert('Delete failed', 'Could not delete this hosted event.');
-                                  return;
-                                }
-                                Alert.alert('Deleted', 'Hosted event deleted successfully.');
-                              },
-                            },
-                          ]
-                        );
-                      }}
+                      onPress={() => confirmHostedDelete(item.id)}
+                      activeOpacity={0.8}
                     >
                       <Ionicons name="trash-outline" size={18} color={Colors.error} />
                     </TouchableOpacity>
                   ) : (
-                    <Ionicons name="chevron-forward" size={18} color={Colors.slate} />
+                    <View style={styles.chevronWrap}>
+                      <Ionicons name="chevron-forward" size={18} color={Colors.slate} />
+                    </View>
                   )}
-                </TouchableOpacity>
+                </View>
               </Animated.View>
             );
           }}
@@ -309,6 +344,11 @@ const styles = StyleSheet.create({
     padding: Spacing.md,
     marginBottom: Spacing.sm,
   },
+  chatMainPress: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   chatIcon: {
     width: 44,
     height: 44,
@@ -349,5 +389,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: Colors.error + '14',
+  },
+  chevronWrap: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

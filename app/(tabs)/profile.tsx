@@ -106,7 +106,6 @@ export default function ProfileScreen() {
       setHistoryLoading(true);
       setHistoryError(null);
 
-      const now = new Date().toISOString();
       const { data: joinedRows, error: joinedError } = await supabase
         .from('participants')
         .select('activity_id, status')
@@ -145,20 +144,16 @@ export default function ProfileScreen() {
 
       const hostedRaw = (hostedData ?? []).map(mapHistoryActivity);
 
-      const joinedUpcoming = joinedActivitiesRaw.filter(
-        (activity) => activity.hostId !== user.uid && activity.status === 'active' && activity.dateTime >= now
-      );
-      const hostedUpcoming = hostedRaw.filter(
-        (activity) => activity.status === 'active' && activity.dateTime >= now
-      );
-      const past = dedupeById([
-        ...joinedActivitiesRaw.filter((activity) => activity.status !== 'active' || activity.dateTime < now),
-        ...hostedRaw.filter((activity) => activity.status !== 'active' || activity.dateTime < now),
-      ]).sort(
+      const hostedAll = hostedRaw.sort(
         (left, right) => new Date(right.dateTime).getTime() - new Date(left.dateTime).getTime()
       );
 
-      setHostedActivities(hostedUpcoming);
+      const past = dedupeById([...joinedActivitiesRaw, ...hostedRaw])
+        .sort(
+        (left, right) => new Date(right.dateTime).getTime() - new Date(left.dateTime).getTime()
+      );
+
+      setHostedActivities(hostedAll);
       setPastActivities(past);
     } catch (error: any) {
       setHistoryError(error.message ?? 'Failed to load profile activity history.');
