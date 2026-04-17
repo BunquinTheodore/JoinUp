@@ -54,14 +54,20 @@ export function ActivityCard({ activity, onPress, onJoin, style, index = 0, isLe
         </View>
 
         {/* Title */}
-        <Text style={styles.title}>{activity.title}</Text>
+        <Text style={styles.title} numberOfLines={2}>
+          {activity.title}
+        </Text>
 
         {/* Location and time */}
         <View style={styles.infoRow}>
           <Ionicons name="location-outline" size={14} color={Colors.slate} />
-          <Text style={styles.infoText}>{activity.location.name}</Text>
+          <Text style={styles.infoText} numberOfLines={2}>
+            {activity.location.name}
+          </Text>
           <Text style={styles.dot}>•</Text>
-          <Text style={styles.infoText}>{dateStr}</Text>
+          <Text style={styles.infoText} numberOfLines={1}>
+            {dateStr}
+          </Text>
         </View>
 
         {/* Progress bar */}
@@ -134,10 +140,12 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: Colors.text,
     marginBottom: Spacing.xs,
+    lineHeight: 24,
   },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
     marginBottom: Spacing.sm,
     gap: 4,
   },
@@ -145,10 +153,13 @@ const styles = StyleSheet.create({
     fontFamily: Typography.body,
     fontSize: 13,
     color: Colors.slate,
+    flexShrink: 1,
+    minWidth: 0,
   },
   dot: {
     color: Colors.slate,
     marginHorizontal: 2,
+    flexShrink: 0,
   },
   joinBtn: {
     backgroundColor: Colors.accent,

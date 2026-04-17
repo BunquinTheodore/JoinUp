@@ -198,16 +198,20 @@ export default function ExploreScreen() {
                       </Text>
                     </View>
 
-                    <Text style={styles.cardTitle} numberOfLines={1}>
+                    <Text style={styles.cardTitle} numberOfLines={2}>
                       {activity.title}
                     </Text>
 
                     <View style={styles.cardMeta}>
                       <View style={styles.metaItem}>
                         <Ionicons name="location-outline" size={14} color={Colors.slate} />
-                        <Text style={styles.metaText}>{activity.location.name}</Text>
+                        <Text style={styles.metaText} numberOfLines={2}>
+                          {activity.location.name}
+                        </Text>
                       </View>
-                      <Text style={styles.metaText}>{dateStr}</Text>
+                      <Text style={styles.metaText} numberOfLines={1}>
+                        {dateStr}
+                      </Text>
                     </View>
                   </View>
                 </TouchableOpacity>
@@ -371,20 +375,27 @@ const styles = StyleSheet.create({
     fontSize: 17,
     color: Colors.text,
     marginBottom: Spacing.xs,
+    lineHeight: 23,
   },
   cardMeta: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    gap: Spacing.xs,
   },
   metaItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    flexShrink: 1,
+    minWidth: 0,
   },
   metaText: {
     fontFamily: Typography.body,
     fontSize: 12,
     color: Colors.slate,
+    flexShrink: 1,
+    minWidth: 0,
   },
 });

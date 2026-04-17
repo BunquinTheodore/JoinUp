@@ -569,10 +569,10 @@ export default function ProfileScreen() {
                         <Ionicons name="image-outline" size={24} color={chipColor} />
                       )}
                     </View>
-                    <Text style={styles.miniCardTitle} numberOfLines={1}>
+                    <Text style={styles.miniCardTitle} numberOfLines={2}>
                       {activity.title}
                     </Text>
-                    <Text style={styles.miniCardMeta} numberOfLines={1}>
+                    <Text style={styles.miniCardMeta} numberOfLines={2}>
                       {activity.locationName}
                     </Text>
                     {isJoinedTab && joinStatus ? (
@@ -958,6 +958,7 @@ const styles = StyleSheet.create({
     color: Colors.text,
     paddingTop: Spacing.sm,
     paddingHorizontal: Spacing.sm,
+    lineHeight: 18,
   },
   miniCardMeta: {
     fontFamily: Typography.body,
@@ -965,6 +966,7 @@ const styles = StyleSheet.create({
     color: Colors.slate,
     paddingHorizontal: Spacing.sm,
     paddingBottom: Spacing.xs,
+    lineHeight: 16,
   },
   joinStatusPill: {
     alignSelf: 'flex-start',
