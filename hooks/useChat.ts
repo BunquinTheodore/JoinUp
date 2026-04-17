@@ -1,7 +1,97 @@
 import { useState, useEffect, useCallback } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import type { Message } from '../types';
 import { getMockChatMessages } from '../lib/mockChats';
+
+const MOCK_CHAT_STORAGE_PREFIX = 'mockChatMessages:v1:';
+
+function mockChatStorageKey(activityId: string) {
+  return `${MOCK_CHAT_STORAGE_PREFIX}${activityId}`;
+}
+
+function normalizePersistedMockMessage(raw: any, activityId: string): Message | null {
+  if (!raw || typeof raw !== 'object') return null;
+  if (typeof raw.id !== 'string') return null;
+  if (typeof raw.senderId !== 'string') return null;
+  if (typeof raw.senderName !== 'string') return null;
+  if (typeof raw.type !== 'string') return null;
+  if (typeof raw.createdAt !== 'string') return null;
+
+  const messageType = raw.type as Message['type'];
+  if (!['text', 'image', 'location', 'system'].includes(messageType)) return null;
+
+  const location =
+    raw.location && typeof raw.location === 'object' &&
+    typeof raw.location.lat === 'number' &&
+    typeof raw.location.lng === 'number'
+      ? { lat: raw.location.lat, lng: raw.location.lng }
+      : undefined;
+
+  return {
+    id: raw.id,
+    activityId,
+    senderId: raw.senderId,
+    senderName: raw.senderName,
+    senderPhoto: typeof raw.senderPhoto === 'string' ? raw.senderPhoto : '',
+    text: typeof raw.text === 'string' ? raw.text : undefined,
+    imageUrl: typeof raw.imageUrl === 'string' ? raw.imageUrl : undefined,
+    location,
+    type: messageType,
+    isPinned: Boolean(raw.isPinned),
+    createdAt: raw.createdAt,
+  };
+}
+
+async function readPersistedMockMessages(activityId: string): Promise<Message[]> {
+  try {
+    const raw = await AsyncStorage.getItem(mockChatStorageKey(activityId));
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((item) => normalizePersistedMockMessage(item, activityId))
+      .filter((item): item is Message => item !== null);
+  } catch {
+    return [];
+  }
+}
+
+function extractLocalMockMessages(messages: Message[], activityId: string) {
+  return messages.filter(
+    (message) =>
+      message.activityId === activityId &&
+      message.id.startsWith(`${activityId}-local-`)
+  );
+}
+
+async function persistMockMessages(activityId: string, messages: Message[]) {
+  try {
+    const localMessages = extractLocalMockMessages(messages, activityId);
+    await AsyncStorage.setItem(mockChatStorageKey(activityId), JSON.stringify(localMessages));
+  } catch {
+    // Best-effort persistence for mock chat experience.
+  }
+}
+
+function mergeMockMessages(seeded: Message[], persisted: Message[]) {
+  const merged = new Map<string, Message>();
+  const sortedSeeded = [...seeded].sort(
+    (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()
+  );
+  const sortedPersisted = [...persisted].sort(
+    (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()
+  );
+
+  // Keep seeded thread chronology intact and append locally persisted user messages after it.
+  [...sortedSeeded, ...sortedPersisted].forEach((message) => {
+    merged.set(message.id, message);
+  });
+
+  return Array.from(merged.values());
+}
 
 function mapMessage(row: any): Message {
   return {
@@ -33,8 +123,10 @@ export function useChat(activityId: string) {
     const fetchMessages = async () => {
       try {
         if (isMockThread) {
+          const seededMessages = getMockChatMessages(activityId);
+          const persistedMessages = await readPersistedMockMessages(activityId);
           if (isActive) {
-            setMessages(getMockChatMessages(activityId));
+            setMessages(mergeMockMessages(seededMessages, persistedMessages));
           }
           return;
         }
@@ -111,7 +203,11 @@ export function useChat(activityId: string) {
           createdAt: new Date().toISOString(),
         };
 
-        setMessages((prev) => [...prev, mockMessage]);
+        setMessages((prev) => {
+          const next = [...prev, mockMessage];
+          void persistMockMessages(activityId, next);
+          return next;
+        });
         return;
       }
 
@@ -154,7 +250,11 @@ export function useChat(activityId: string) {
           createdAt: new Date().toISOString(),
         };
 
-        setMessages((prev) => [...prev, mockMessage]);
+        setMessages((prev) => {
+          const next = [...prev, mockMessage];
+          void persistMockMessages(activityId, next);
+          return next;
+        });
         return;
       }
 
@@ -197,7 +297,11 @@ export function useChat(activityId: string) {
           createdAt: new Date().toISOString(),
         };
 
-        setMessages((prev) => [...prev, mockMessage]);
+        setMessages((prev) => {
+          const next = [...prev, mockMessage];
+          void persistMockMessages(activityId, next);
+          return next;
+        });
         return;
       }
 
