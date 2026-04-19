@@ -102,6 +102,30 @@ npm run web
 
 When starting with a tunnel, scan the QR code from the Expo terminal or open the generated `exp://` link in Expo Go.
 
+### Google OAuth setup (Supabase)
+
+If Google sign-in redirects to `localhost:3000`, Supabase is falling back to its default site URL because the app callback URL is not allow-listed.
+
+In Supabase Dashboard, configure these values:
+
+1. Authentication > URL Configuration > Site URL
+
+- For Expo Go / mobile QA: `joinup://auth/callback`
+- For local web QA only: `http://localhost:8081` (use this only when primarily testing web OAuth)
+
+1. Authentication > URL Configuration > Redirect URLs
+
+- `joinup://auth/callback`
+- `exp://*/--/auth/callback`
+- `http://localhost:8081`
+
+Notes:
+
+- `joinup://auth/callback` is used by development builds and production app installs.
+- `exp://*/--/auth/callback` is used by Expo Go.
+- If you use `expo start --tunnel`, keep the wildcard `exp://*/--/auth/callback` so callback hosts can change between sessions.
+- If a redirect URL does not match exactly, Supabase falls back to Site URL. Setting Site URL to localhost will fail on a physical phone.
+
 ## Development Notes
 
 - Activities are backed by Supabase and merged with seeded mock activities for development.

@@ -2,12 +2,42 @@ import { useState, useCallback, useEffect } from 'react';
 import { Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { makeRedirectUri } from 'expo-auth-session';
+import Constants from 'expo-constants';
+import * as Linking from 'expo-linking';
 import { useAuthStore } from '../store/authStore';
 import { supabase } from '../lib/supabase';
 import { queryClient } from '../lib/queryClient';
 import type { User } from '../types';
 
 WebBrowser.maybeCompleteAuthSession();
+
+const GOOGLE_AUTH_TIMEOUT_MS = 45000;
+
+function isExpoGoRuntime() {
+  if (Platform.OS === 'web') {
+    return false;
+  }
+
+  // `appOwnership` can vary across SDK/runtime combinations.
+  // `executionEnvironment === 'storeClient'` reliably indicates Expo Go.
+  const executionEnvironment = String((Constants as any).executionEnvironment ?? '').toLowerCase();
+  const appOwnership = String((Constants as any).appOwnership ?? '').toLowerCase();
+
+  return executionEnvironment === 'storeclient' || appOwnership === 'expo';
+}
+
+function getOAuthRedirectUri() {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    return window.location.origin;
+  }
+
+  if (isExpoGoRuntime()) {
+    return Linking.createURL('/auth/callback');
+  }
+
+  // Development builds and standalone apps should always use the custom scheme callback.
+  return 'joinup://auth/callback';
+}
 
 function extractAuthCallbackData(callbackUrl: string) {
   const parsedUrl = new URL(callbackUrl);
@@ -24,6 +54,55 @@ function extractAuthCallbackData(callbackUrl: string) {
       hashParams.get('error_description') ??
       hashParams.get('error'),
   };
+}
+
+async function finalizeOAuthCallbackUrl(
+  callbackUrl: string,
+  setUser: (user: User | null) => void
+) {
+  const { code, accessToken, refreshToken, errorDescription } = extractAuthCallbackData(callbackUrl);
+
+  if (errorDescription) {
+    throw new Error(decodeURIComponent(errorDescription));
+  }
+
+  if (code) {
+    const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+    if (exchangeError) throw exchangeError;
+
+    const {
+      data: { session: exchangedSession },
+    } = await supabase.auth.getSession();
+
+    if (exchangedSession) {
+      await resolveSessionUser(exchangedSession, setUser);
+      return true;
+    }
+
+    return false;
+  }
+
+  if (accessToken && refreshToken) {
+    const { error: setSessionError } = await supabase.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+
+    if (setSessionError) throw setSessionError;
+
+    const {
+      data: { session: tokenSession },
+    } = await supabase.auth.getSession();
+
+    if (tokenSession) {
+      await resolveSessionUser(tokenSession, setUser);
+      return true;
+    }
+
+    return false;
+  }
+
+  return false;
 }
 
 async function isGoogleProviderEnabled() {
@@ -281,14 +360,7 @@ export function useAuth() {
       setLoading(true);
       setError(null);
 
-      const redirectTo = makeRedirectUri({
-        scheme: 'joinup',
-      });
-
-      const callbackRedirectTo =
-        Platform.OS === 'web' && typeof window !== 'undefined'
-          ? window.location.origin
-          : redirectTo;
+      const callbackRedirectTo = getOAuthRedirectUri();
 
       const googleEnabled = await isGoogleProviderEnabled();
       if (!googleEnabled) {
@@ -334,32 +406,58 @@ export function useAuth() {
         throw new Error('Google authentication could not be started.');
       }
 
-      const result = await WebBrowser.openAuthSessionAsync(data.url, callbackRedirectTo);
+      let callbackUrlFromLinking: string | null = null;
+      const linkingSubscription = Linking.addEventListener('url', (event) => {
+        callbackUrlFromLinking = event.url;
+      });
+
+      let result: WebBrowser.WebBrowserAuthSessionResult;
+
+      try {
+        result = (await Promise.race([
+          WebBrowser.openAuthSessionAsync(data.url, callbackRedirectTo),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => {
+              reject(new Error('Google authentication timed out. Please try again.'));
+            }, GOOGLE_AUTH_TIMEOUT_MS);
+          }),
+        ])) as WebBrowser.WebBrowserAuthSessionResult;
+      } finally {
+        linkingSubscription.remove();
+      }
+
+      if (result.type === 'success' && result.url) {
+        if (await finalizeOAuthCallbackUrl(result.url, setUser)) {
+          return;
+        }
+      }
+
+      if (callbackUrlFromLinking) {
+        if (await finalizeOAuthCallbackUrl(callbackUrlFromLinking, setUser)) {
+          return;
+        }
+      }
+
+      const initialUrl = await Linking.getInitialURL();
+      if (initialUrl) {
+        if (await finalizeOAuthCallbackUrl(initialUrl, setUser)) {
+          return;
+        }
+      }
 
       if (result.type !== 'success' || !result.url) {
+        // Some Android + Expo Go flows complete session without returning a success URL.
+        // Check if Supabase already has a valid session before treating this as canceled.
+        const {
+          data: { session: fallbackSession },
+        } = await supabase.auth.getSession();
+
+        if (fallbackSession) {
+          await resolveSessionUser(fallbackSession, setUser);
+          return;
+        }
+
         throw new Error('Google authentication was canceled.');
-      }
-
-      const { code, accessToken, refreshToken, errorDescription } = extractAuthCallbackData(result.url);
-
-      if (errorDescription) {
-        throw new Error(decodeURIComponent(errorDescription));
-      }
-
-      if (code) {
-        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-        if (exchangeError) throw exchangeError;
-        return;
-      }
-
-      if (accessToken && refreshToken) {
-        const { error: setSessionError } = await supabase.auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken,
-        });
-
-        if (setSessionError) throw setSessionError;
-        return;
       }
 
       throw new Error('Google authentication did not return a valid session.');
