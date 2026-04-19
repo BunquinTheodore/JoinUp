@@ -86,9 +86,6 @@ export default function HomeFeedScreen() {
           >
             <Ionicons name="notifications-outline" size={24} color={Colors.primary} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.avatar}>
-            <Ionicons name="person" size={18} color={Colors.white} />
-          </TouchableOpacity>
         </View>
       </View>
 
@@ -200,14 +197,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  logo: {
-    fontSize: 24,
     fontFamily: Typography.display,
   },
   logoJoin: {
