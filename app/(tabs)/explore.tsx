@@ -82,11 +82,6 @@ export default function ExploreScreen() {
       <NavBar
         title="Explore"
         showBack
-        rightAction={
-          <TouchableOpacity style={styles.filterBtn}>
-            <Ionicons name="filter-outline" size={22} color={Colors.text} />
-          </TouchableOpacity>
-        }
       />
 
       {/* Location dropdown */}
