@@ -86,7 +86,7 @@ export default function ProfileScreen() {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
-  const [authActionLoading, setAuthActionLoading] = useState<'switch' | 'logout' | null>(null);
+  const [authActionLoading, setAuthActionLoading] = useState<'switch' | 'logout' | 'delete' | null>(null);
   const [editName, setEditName] = useState(user?.displayName ?? '');
   const [editLocation, setEditLocation] = useState(user?.location ?? '');
   const [editBio, setEditBio] = useState(user?.bio ?? '');
@@ -366,6 +366,54 @@ export default function ProfileScreen() {
     },
     [router]
   );
+
+  const handleDeleteAccount = useCallback(() => {
+    Alert.alert(
+      'Delete account?',
+      'This permanently deletes your account, profile data, hosted activities, and chat history. This cannot be undone.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete account',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setAuthActionLoading('delete');
+              setShowSettingsSheet(false);
+
+              const { data, error } = await supabase.rpc('delete_my_account');
+              if (error) throw error;
+              if (!data) {
+                throw new Error('Account deletion was not completed. Please try again.');
+              }
+
+              await signOutAndResetSession();
+              router.replace('/(auth)');
+            } catch (error: any) {
+              const rawMessage = String(error?.message ?? '');
+              const missingRpcFunction =
+                rawMessage.toLowerCase().includes('delete_my_account') &&
+                rawMessage.toLowerCase().includes('schema cache');
+
+              if (missingRpcFunction) {
+                Alert.alert(
+                  'Delete unavailable',
+                  'Database migration not applied yet. Run the latest Supabase migration (including 007_delete_own_account.sql), then try again.'
+                );
+              } else {
+                Alert.alert('Delete failed', error.message ?? 'Could not delete your account.');
+              }
+            } finally {
+              setAuthActionLoading(null);
+            }
+          },
+        },
+      ]
+    );
+  }, [router]);
 
   const joinedActivities = useMemo<HistoryActivity[]>(() => {
     const activityMap = new Map(activities.map((activity) => [activity.id, activity]));
@@ -665,9 +713,16 @@ export default function ProfileScreen() {
       <BottomSheet
         visible={showSettingsSheet}
         onClose={() => setShowSettingsSheet(false)}
-        snapPoints={[330]}
+        snapPoints={[430]}
       >
-        <View style={styles.settingsSheetContent}>
+        <ScrollView
+          style={styles.sheetScroll}
+          contentContainerStyle={[
+            styles.settingsSheetContent,
+            { paddingBottom: insets.bottom + Spacing.xxxl },
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
           <Text style={styles.sheetTitle}>Account settings</Text>
           <Text style={styles.settingsSubtitle}>
             Manage how this device signs into JoinUp.
@@ -716,7 +771,29 @@ export default function ProfileScreen() {
               <Ionicons name="chevron-forward" size={18} color={Colors.slate} />
             )}
           </TouchableOpacity>
-        </View>
+
+          <TouchableOpacity
+            style={styles.settingsAction}
+            onPress={handleDeleteAccount}
+            activeOpacity={0.85}
+            disabled={authActionLoading !== null}
+          >
+            <View style={[styles.settingsIconWrap, styles.settingsIconDanger]}>
+              <Ionicons name="trash-outline" size={20} color={Colors.error} />
+            </View>
+            <View style={styles.settingsActionTextWrap}>
+              <Text style={[styles.settingsActionTitle, styles.settingsActionTitleDanger]}>Delete account</Text>
+              <Text style={styles.settingsActionSubtitle}>
+                Permanently remove your account and all associated data.
+              </Text>
+            </View>
+            {authActionLoading === 'delete' ? (
+              <ActivityIndicator color={Colors.error} />
+            ) : (
+              <Ionicons name="chevron-forward" size={18} color={Colors.slate} />
+            )}
+          </TouchableOpacity>
+        </ScrollView>
       </BottomSheet>
     </View>
   );
@@ -789,6 +866,9 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.text,
     marginBottom: 2,
+  },
+  settingsActionTitleDanger: {
+    color: Colors.error,
   },
   settingsActionSubtitle: {
     fontFamily: Typography.body,

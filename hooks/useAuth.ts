@@ -318,6 +318,27 @@ export function useAuth() {
         setLoading(true);
         setError(null);
         const normalizedEmail = data.email.trim().toLowerCase();
+
+        // Fast guard to avoid duplicate account attempts with the same email.
+        const { data: existingProfile, error: existingProfileError } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', normalizedEmail)
+          .maybeSingle();
+
+        // Ignore missing-column errors for instances that have not run the latest migration yet.
+        const missingEmailColumn =
+          String((existingProfileError as any)?.message ?? '').toLowerCase().includes('column') &&
+          String((existingProfileError as any)?.message ?? '').toLowerCase().includes('email');
+
+        if (existingProfileError && !missingEmailColumn) {
+          throw existingProfileError;
+        }
+
+        if (existingProfile) {
+          throw new Error('This email is already registered. Please sign in instead.');
+        }
+
         const { data: authData, error: authError } = await supabase.auth.signUp({
           email: normalizedEmail,
           password: data.password,
@@ -330,6 +351,18 @@ export function useAuth() {
           },
         });
         if (authError) throw authError;
+
+        // When email-confirmation is enabled, Supabase can return a "fake" user for
+        // already-registered emails (no session + empty identities) instead of throwing.
+        const isExistingEmailResponse =
+          !authData.session &&
+          !!authData.user &&
+          Array.isArray((authData.user as any).identities) &&
+          (authData.user as any).identities.length === 0;
+
+        if (isExistingEmailResponse) {
+          throw new Error('This email is already registered. Please sign in instead.');
+        }
 
         // If we have a session immediately, user is logged in and profile trigger has fired
         if (authData.session) {
@@ -346,7 +379,17 @@ export function useAuth() {
         return { requiresEmailConfirmation: true };
       } catch (err: any) {
         console.error('Sign up error:', err);
-        setError(err.message ?? 'Failed to create account. Please try again.');
+        const rawMessage = String(err?.message ?? '').toLowerCase();
+        const duplicateEmail =
+          rawMessage.includes('already registered') ||
+          rawMessage.includes('already exists') ||
+          rawMessage.includes('duplicate key');
+
+        if (duplicateEmail) {
+          setError('This email is already registered. Please sign in instead.');
+        } else {
+          setError(err.message ?? 'Failed to create account. Please try again.');
+        }
         throw err;
       } finally {
         setLoading(false);
