@@ -199,6 +199,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     fontFamily: Typography.display,
   },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  logo: {
+    fontSize: 24,
+    fontFamily: Typography.display,
+  },
   logoJoin: {
     color: Colors.primary,
   },
@@ -213,14 +221,6 @@ const styles = StyleSheet.create({
   iconBtn: {
     width: 44,
     height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: Colors.peach,
     alignItems: 'center',
     justifyContent: 'center',
   },

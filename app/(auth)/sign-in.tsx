@@ -15,13 +15,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing } from '../../constants/theme';
 import { InputField } from '../../components/ui/InputField';
 import { PrimaryButton } from '../../components/ui/PrimaryButton';
-import { SecondaryButton } from '../../components/ui/SecondaryButton';
 import { useAuth } from '../../hooks/useAuth';
 
 export default function SignInScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { signIn, signInWithGoogle, isLoading, error } = useAuth();
+  const { signIn, isLoading, error } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -117,26 +116,6 @@ export default function SignInScreen() {
           />
         </Animated.View>
 
-        <View style={styles.dividerRow}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>or</Text>
-          <View style={styles.dividerLine} />
-        </View>
-
-        <Animated.View entering={FadeInDown.delay(400).springify()}>
-          <SecondaryButton
-            title="Continue with Google"
-            onPress={async () => {
-              try {
-                await signInWithGoogle();
-              } catch {}
-            }}
-            loading={isLoading}
-            disabled={isLoading}
-            icon={<Text style={styles.googleIcon}>G</Text>}
-          />
-        </Animated.View>
-
         <TouchableOpacity
           onPress={() => router.push('/(auth)/sign-up')}
           style={styles.signUpLink}
@@ -211,27 +190,6 @@ const styles = StyleSheet.create({
   },
   signInBtn: {
     marginBottom: Spacing.lg,
-  },
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: Spacing.lg,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: Colors.divider,
-  },
-  dividerText: {
-    fontFamily: Typography.body,
-    fontSize: 14,
-    color: Colors.slate,
-    marginHorizontal: Spacing.md,
-  },
-  googleIcon: {
-    fontFamily: Typography.bodyBold,
-    fontSize: 18,
-    color: '#4285F4',
   },
   signUpLink: {
     alignItems: 'center',

@@ -719,7 +719,7 @@ export default function ProfileScreen() {
           style={styles.sheetScroll}
           contentContainerStyle={[
             styles.settingsSheetContent,
-            { paddingBottom: insets.bottom + Spacing.xxxl },
+            { paddingBottom: insets.bottom + Spacing.xl * 2 },
           ]}
           showsVerticalScrollIndicator={false}
         >
