@@ -21,6 +21,29 @@ import { useActivities } from '../../../hooks/useActivities';
 import { useAuthStore } from '../../../store/authStore';
 import { supabase } from '../../../lib/supabase';
 
+type PickedImage = {
+  uri: string;
+  base64?: string | null;
+  mimeType?: string | null;
+};
+
+const deriveImageExtension = (uri: string, mimeType?: string): string => {
+  if (mimeType?.startsWith('image/')) {
+    const fromMime = mimeType.split('/')[1]?.toLowerCase();
+    if (fromMime) {
+      return fromMime === 'jpeg' ? 'jpg' : fromMime;
+    }
+  }
+
+  const sanitizedUri = uri.split('?')[0].toLowerCase();
+  const match = sanitizedUri.match(/\.(jpg|jpeg|png|webp|heic|heif)$/);
+  if (match?.[1]) {
+    return match[1] === 'jpeg' ? 'jpg' : match[1];
+  }
+
+  return 'jpg';
+};
+
 export default function ManageActivityScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -35,17 +58,29 @@ export default function ManageActivityScreen() {
     [activities, id]
   );
 
-  const uploadActivityImage = async (uri: string): Promise<string> => {
-    const response = await fetch(uri);
-    const blob = await response.blob();
-    const extension = (uri.split('.').pop() ?? 'jpg').split('?')[0].toLowerCase();
-    const path = `activity-images/${user?.uid ?? 'anon'}-${activity?.id}-${Date.now()}.${extension}`;
+  const createUploadBlob = async (image: PickedImage): Promise<Blob> => {
+    if (image.base64) {
+      const mimeType = image.mimeType || 'image/jpeg';
+      const dataUri = `data:${mimeType};base64,${image.base64}`;
+      const response = await fetch(dataUri);
+      return response.blob();
+    }
+
+    const response = await fetch(image.uri);
+    return response.blob();
+  };
+
+  const uploadActivityImage = async (image: PickedImage): Promise<string> => {
+    const blob = await createUploadBlob(image);
+    const extension = deriveImageExtension(image.uri, image.mimeType ?? blob.type);
+    const randomSuffix = Math.random().toString(36).slice(2, 8);
+    const path = `activity-images/${user?.uid ?? 'anon'}-${activity?.id}-${Date.now()}-${randomSuffix}.${extension}`;
 
     const { error: uploadError } = await supabase.storage
       .from('chat-images')
       .upload(path, blob, {
         upsert: false,
-        contentType: blob.type || 'image/jpeg',
+        contentType: blob.type || image.mimeType || 'image/jpeg',
       });
 
     if (uploadError) {
@@ -67,6 +102,7 @@ export default function ManageActivityScreen() {
         mediaTypes: ['images'],
         allowsEditing: true,
         quality: 0.85,
+        base64: true,
       });
 
       if (result.canceled || !result.assets?.[0]?.uri) {
@@ -74,7 +110,12 @@ export default function ManageActivityScreen() {
       }
 
       setIsUploadingImage(true);
-      const imageUrl = await uploadActivityImage(result.assets[0].uri);
+      const picked = result.assets[0];
+      const imageUrl = await uploadActivityImage({
+        uri: picked.uri,
+        base64: picked.base64,
+        mimeType: picked.mimeType,
+      });
 
       // Update activity with new image
       const currentImages = activity?.images ?? [];

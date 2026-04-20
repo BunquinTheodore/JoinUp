@@ -30,6 +30,28 @@ import { format } from 'date-fns';
 
 const CATEGORIES = ['Fitness', 'Study', 'Café', 'Outdoors', 'Gaming', 'Social', 'Food', 'Other'];
 type Category = Activity['category'];
+type PickedImage = {
+  uri: string;
+  base64?: string | null;
+  mimeType?: string | null;
+};
+
+const deriveImageExtension = (uri: string, mimeType?: string): string => {
+  if (mimeType?.startsWith('image/')) {
+    const fromMime = mimeType.split('/')[1]?.toLowerCase();
+    if (fromMime) {
+      return fromMime === 'jpeg' ? 'jpg' : fromMime;
+    }
+  }
+
+  const sanitizedUri = uri.split('?')[0].toLowerCase();
+  const match = sanitizedUri.match(/\.(jpg|jpeg|png|webp|heic|heif)$/);
+  if (match?.[1]) {
+    return match[1] === 'jpeg' ? 'jpg' : match[1];
+  }
+
+  return 'jpg';
+};
 
 type FormErrors = {
   title?: string;
@@ -75,7 +97,7 @@ export default function CreateActivityScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploadingCover, setIsUploadingCover] = useState(false);
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
-  const [selectedImageUris, setSelectedImageUris] = useState<string[]>([]);
+  const [selectedImages, setSelectedImages] = useState<PickedImage[]>([]);
   const [locationCoords, setLocationCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
 
@@ -118,20 +140,32 @@ export default function CreateActivityScreen() {
     return nextErrors;
   };
 
-  const uploadActivityImages = async (uris: string[]): Promise<string[]> => {
+  const createUploadBlob = async (image: PickedImage): Promise<Blob> => {
+    if (image.base64) {
+      const mimeType = image.mimeType || 'image/jpeg';
+      const dataUri = `data:${mimeType};base64,${image.base64}`;
+      const response = await fetch(dataUri);
+      return response.blob();
+    }
+
+    const response = await fetch(image.uri);
+    return response.blob();
+  };
+
+  const uploadActivityImages = async (images: PickedImage[]): Promise<string[]> => {
     const uploadedUrls: string[] = [];
 
-    for (const uri of uris) {
-      const response = await fetch(uri);
-      const blob = await response.blob();
-      const extension = (uri.split('.').pop() ?? 'jpg').split('?')[0].toLowerCase();
-      const path = `activity-covers/${user?.uid ?? 'anon'}-${Date.now()}-${Math.random()}.${extension}`;
+    for (const image of images) {
+      const blob = await createUploadBlob(image);
+      const extension = deriveImageExtension(image.uri, image.mimeType ?? blob.type);
+      const randomSuffix = Math.random().toString(36).slice(2, 8);
+      const path = `activity-covers/${user?.uid ?? 'anon'}-${Date.now()}-${randomSuffix}.${extension}`;
 
       const { error: uploadError } = await supabase.storage
         .from('chat-images')
         .upload(path, blob, {
           upsert: false,
-          contentType: blob.type || 'image/jpeg',
+          contentType: blob.type || image.mimeType || 'image/jpeg',
         });
 
       if (uploadError) {
@@ -193,6 +227,7 @@ export default function CreateActivityScreen() {
         mediaTypes: ['images'],
         allowsEditing: true,
         quality: 0.85,
+        base64: true,
       });
 
       if (result.canceled || !result.assets?.[0]?.uri) {
@@ -200,15 +235,22 @@ export default function CreateActivityScreen() {
       }
 
       // Add the new image to the array
-      const newUri = result.assets[0].uri;
-      setSelectedImageUris((prev) => [...prev, newUri]);
+      const picked = result.assets[0];
+      setSelectedImages((prev) => [
+        ...prev,
+        {
+          uri: picked.uri,
+          base64: picked.base64,
+          mimeType: picked.mimeType,
+        },
+      ]);
     } catch {
       Alert.alert('Image unavailable', 'Could not select this image right now.');
     }
   };
 
   const handleRemoveImage = (index: number) => {
-    setSelectedImageUris((prev) => prev.filter((_, i) => i !== index));
+    setSelectedImages((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleDateChange = (_event: DateTimePickerEvent, selectedDate?: Date) => {
@@ -266,10 +308,10 @@ export default function CreateActivityScreen() {
       let coverImageUrl: string | null = null;
       let activityImages: string[] = [];
 
-      if (selectedImageUris.length > 0) {
+      if (selectedImages.length > 0) {
         setIsUploadingCover(true);
         try {
-          activityImages = await uploadActivityImages(selectedImageUris);
+          activityImages = await uploadActivityImages(selectedImages);
           coverImageUrl = activityImages[0]; // Use first image as cover
         } catch {
           Alert.alert('Image upload failed', 'The activity will still be created without images.');
@@ -350,15 +392,15 @@ export default function CreateActivityScreen() {
         {/* Images Gallery */}
         <Animated.View entering={FadeInDown.delay(150).springify()}>
           <View style={styles.imagesSection}>
-            {selectedImageUris.length > 0 ? (
+            {selectedImages.length > 0 ? (
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 style={styles.imageScrollView}
               >
-                {selectedImageUris.map((uri, index) => (
+                {selectedImages.map((image, index) => (
                   <View key={index} style={styles.imageContainer}>
-                    <Image source={{ uri }} style={styles.selectedImage} resizeMode="cover" />
+                    <Image source={{ uri: image.uri }} style={styles.selectedImage} resizeMode="cover" />
                     <TouchableOpacity
                       style={styles.removeImageBtn}
                       onPress={() => handleRemoveImage(index)}
@@ -372,7 +414,7 @@ export default function CreateActivityScreen() {
             <TouchableOpacity style={styles.addImageButton} onPress={handleImagePick}>
               <Ionicons name="add-circle-outline" size={24} color={Colors.accent} />
               <Text style={styles.addImageText}>
-                {selectedImageUris.length > 0 ? 'Add More Photos' : 'Add Cover Photo'}
+                {selectedImages.length > 0 ? 'Add More Photos' : 'Add Cover Photo'}
               </Text>
             </TouchableOpacity>
           </View>
