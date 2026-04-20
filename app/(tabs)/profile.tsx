@@ -90,6 +90,7 @@ export default function ProfileScreen() {
   const [editName, setEditName] = useState(user?.displayName ?? '');
   const [editLocation, setEditLocation] = useState(user?.location ?? '');
   const [editBio, setEditBio] = useState(user?.bio ?? '');
+  const [accountEmail, setAccountEmail] = useState('');
   const [hostedActivities, setHostedActivities] = useState<HistoryActivity[]>([]);
   const [pastActivities, setPastActivities] = useState<HistoryActivity[]>([]);
 
@@ -98,6 +99,23 @@ export default function ProfileScreen() {
     setEditLocation(user?.location ?? '');
     setEditBio(user?.bio ?? '');
   }, [user?.bio, user?.displayName, user?.location]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadAccountEmail = async () => {
+      const { data } = await supabase.auth.getUser();
+      if (isMounted) {
+        setAccountEmail(data.user?.email ?? '');
+      }
+    };
+
+    void loadAccountEmail();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const fetchHistory = useCallback(async () => {
     if (!user?.uid) return;
@@ -460,6 +478,7 @@ export default function ProfileScreen() {
     ],
     [hostedActivities.length, joinedActivities.length, user?.rating]
   );
+  const profileBio = user?.bio?.trim() || 'No bio yet.';
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -505,7 +524,9 @@ export default function ProfileScreen() {
           <Text style={styles.displayName}>
             {user?.displayName ?? 'User'}
           </Text>
+          <Text style={styles.profileBio}>{profileBio}</Text>
           <Text style={styles.location}>{user?.location || 'No location set'}</Text>
+          {accountEmail ? <Text style={styles.accountEmail}>{accountEmail}</Text> : null}
           <TouchableOpacity
             style={styles.editBtn}
             onPress={() => setShowEditSheet(true)}
@@ -527,9 +548,7 @@ export default function ProfileScreen() {
         {/* Bio */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Bio</Text>
-          <Text style={styles.bioText}>
-            {user?.bio ?? 'No bio yet.'}
-          </Text>
+          <Text style={styles.bioText}>{profileBio}</Text>
         </View>
 
         {/* Interests */}
@@ -920,6 +939,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.slate,
     marginTop: 2,
+  },
+  accountEmail: {
+    fontFamily: Typography.body,
+    fontSize: 13,
+    color: Colors.slate,
+    marginTop: 2,
+  },
+  profileBio: {
+    fontFamily: Typography.body,
+    fontSize: 13,
+    color: Colors.text,
+    marginTop: Spacing.xs,
+    textAlign: 'center',
+    maxWidth: 260,
   },
   editBtn: {
     marginTop: Spacing.sm,

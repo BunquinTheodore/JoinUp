@@ -12,6 +12,7 @@ import type { User } from '../types';
 WebBrowser.maybeCompleteAuthSession();
 
 const GOOGLE_AUTH_TIMEOUT_MS = 45000;
+const EMAIL_SIGN_IN_TIMEOUT_MS = 15000;
 
 function isExpoGoRuntime() {
   if (Platform.OS === 'web') {
@@ -285,10 +286,17 @@ export function useAuth() {
         setLoading(true);
         setError(null);
         const normalizedEmail = email.trim().toLowerCase();
-        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-          email: normalizedEmail,
-          password,
-        });
+        const { data: authData, error: authError } = (await Promise.race([
+          supabase.auth.signInWithPassword({
+            email: normalizedEmail,
+            password,
+          }),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => {
+              reject(new Error('Sign in timed out. Please check your connection and try again.'));
+            }, EMAIL_SIGN_IN_TIMEOUT_MS);
+          }),
+        ])) as Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>;
         if (authError) throw authError;
 
         await resolveSessionUser(authData.session, setUser);
