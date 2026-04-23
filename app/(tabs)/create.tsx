@@ -17,6 +17,8 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as ImagePicker from 'expo-image-picker';
+import { readAsStringAsync } from 'expo-file-system/legacy';
+import { decode } from 'base64-arraybuffer';
 import * as Location from 'expo-location';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
 import { InputField } from '../../components/ui/InputField';
@@ -32,8 +34,15 @@ const CATEGORIES = ['Fitness', 'Study', 'Café', 'Outdoors', 'Gaming', 'Social',
 type Category = Activity['category'];
 type PickedImage = {
   uri: string;
-  base64?: string | null;
   mimeType?: string | null;
+  base64?: string | null;
+  file?: Blob;
+  fileSize?: number;
+};
+
+type UploadPayload = {
+  body: Blob | ArrayBuffer;
+  contentType: string;
 };
 
 const deriveImageExtension = (uri: string, mimeType?: string): string => {
@@ -51,6 +60,10 @@ const deriveImageExtension = (uri: string, mimeType?: string): string => {
   }
 
   return 'jpg';
+};
+
+const isWebBlobFile = (value: unknown): value is Blob => {
+  return typeof Blob !== 'undefined' && value instanceof Blob;
 };
 
 type FormErrors = {
@@ -140,39 +153,93 @@ export default function CreateActivityScreen() {
     return nextErrors;
   };
 
-  const createUploadBlob = async (image: PickedImage): Promise<Blob> => {
-    if (image.base64) {
-      const mimeType = image.mimeType || 'image/jpeg';
-      const dataUri = `data:${mimeType};base64,${image.base64}`;
-      const response = await fetch(dataUri);
-      return response.blob();
+  const createUploadPayload = async (image: PickedImage): Promise<UploadPayload> => {
+    if (typeof image.fileSize === 'number' && image.fileSize <= 0) {
+      throw new Error('Selected image is empty. Please pick a different photo.');
     }
 
-    const response = await fetch(image.uri);
-    return response.blob();
+    if (isWebBlobFile(image.file)) {
+      if (image.file.size === 0) {
+        throw new Error('Selected image is empty. Please pick a different photo.');
+      }
+
+      return {
+        body: image.file,
+        contentType: image.file.type || image.mimeType || 'image/jpeg',
+      };
+    }
+
+    // On native devices, prefer picker base64 to avoid zero-byte fetch(uri) blobs.
+    if (Platform.OS !== 'web') {
+      const base64 = image.base64 ?? await readAsStringAsync(image.uri, { encoding: 'base64' });
+      if (!base64 || base64.length === 0) {
+        throw new Error('Could not read selected image data.');
+      }
+
+      const decoded = decode(base64);
+      if (decoded.byteLength === 0) {
+        throw new Error('Selected image decoded to an empty file.');
+      }
+
+      return {
+        body: decoded,
+        contentType: image.mimeType || 'image/jpeg',
+      };
+    }
+
+    try {
+      // Try fetch first (works on web/localhost)
+      const response = await fetch(image.uri);
+      const blob = await response.blob();
+
+      if (!blob || blob.size === 0) {
+        throw new Error('Image fetch returned an empty file.');
+      }
+
+      return {
+        body: blob,
+        contentType: blob.type || image.mimeType || 'image/jpeg',
+      };
+    } catch (err) {
+      // Prefer picker-provided base64 on native because ph:// URIs can fail fetch/read.
+      const base64 = image.base64 ?? await readAsStringAsync(image.uri, { encoding: 'base64' });
+      if (!base64 || base64.length === 0) {
+        throw new Error('Could not read selected image data.');
+      }
+
+      const decoded = decode(base64);
+      if (decoded.byteLength === 0) {
+        throw new Error('Selected image decoded to an empty file.');
+      }
+
+      return {
+        body: decoded,
+        contentType: image.mimeType || 'image/jpeg',
+      };
+    }
   };
 
   const uploadActivityImages = async (images: PickedImage[]): Promise<string[]> => {
     const uploadedUrls: string[] = [];
 
     for (const image of images) {
-      const blob = await createUploadBlob(image);
-      const extension = deriveImageExtension(image.uri, image.mimeType ?? blob.type);
+      const payload = await createUploadPayload(image);
+      const extension = deriveImageExtension(image.uri, image.mimeType ?? payload.contentType);
       const randomSuffix = Math.random().toString(36).slice(2, 8);
       const path = `activity-covers/${user?.uid ?? 'anon'}-${Date.now()}-${randomSuffix}.${extension}`;
 
       const { error: uploadError } = await supabase.storage
-        .from('chat-images')
-        .upload(path, blob, {
+        .from('activity-images')
+        .upload(path, payload.body, {
           upsert: false,
-          contentType: blob.type || image.mimeType || 'image/jpeg',
+          contentType: payload.contentType,
         });
 
       if (uploadError) {
         throw uploadError;
       }
 
-      const url = supabase.storage.from('chat-images').getPublicUrl(path).data.publicUrl;
+      const url = supabase.storage.from('activity-images').getPublicUrl(path).data.publicUrl;
       uploadedUrls.push(url);
     }
 
@@ -227,7 +294,7 @@ export default function CreateActivityScreen() {
         mediaTypes: ['images'],
         allowsEditing: true,
         quality: 0.85,
-        base64: true,
+        base64: Platform.OS !== 'web',
       });
 
       if (result.canceled || !result.assets?.[0]?.uri) {
@@ -240,8 +307,10 @@ export default function CreateActivityScreen() {
         ...prev,
         {
           uri: picked.uri,
-          base64: picked.base64,
           mimeType: picked.mimeType,
+          base64: picked.base64,
+          file: (picked as any).file,
+          fileSize: picked.fileSize,
         },
       ]);
     } catch {

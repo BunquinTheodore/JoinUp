@@ -12,14 +12,15 @@ function normalizeImageUrl(value: unknown): string | undefined {
   const raw = value.trim();
   if (!raw) return undefined;
 
-  // Salvage legacy malformed URLs such as "...jpg.blob:http://..." by keeping the first valid image URL.
-  const extracted = raw.match(/https:\/\/[^\s]+?\.(jpg|jpeg|png|webp|heic|heif)/i);
-  if (extracted?.[0]) {
-    return extracted[0];
-  }
-
+  // Keep valid absolute URLs exactly as-is (including query tokens for signed URLs).
   if (raw.startsWith('https://') || raw.startsWith('http://')) {
     return raw;
+  }
+
+  // Salvage legacy malformed URLs such as "...jpg.blob:http://..." by keeping the first valid image URL.
+  const extracted = raw.match(/https?:\/\/[^\s]+?\.(jpg|jpeg|png|webp|heic|heif)(?:\?[^\s]*)?/i);
+  if (extracted?.[0]) {
+    return extracted[0];
   }
 
   return undefined;

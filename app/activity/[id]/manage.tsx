@@ -8,12 +8,15 @@ import {
   Alert,
   Image,
   ScrollView,
+  Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as ImagePicker from 'expo-image-picker';
+import { readAsStringAsync } from 'expo-file-system/legacy';
+import { decode } from 'base64-arraybuffer';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../../../constants/theme';
 import { NavBar } from '../../../components/layout/NavBar';
 import { SlotProgressBar } from '../../../components/ui/SlotProgressBar';
@@ -23,8 +26,15 @@ import { supabase } from '../../../lib/supabase';
 
 type PickedImage = {
   uri: string;
-  base64?: string | null;
   mimeType?: string | null;
+  base64?: string | null;
+  file?: Blob;
+  fileSize?: number;
+};
+
+type UploadPayload = {
+  body: Blob | ArrayBuffer;
+  contentType: string;
 };
 
 const deriveImageExtension = (uri: string, mimeType?: string): string => {
@@ -44,6 +54,10 @@ const deriveImageExtension = (uri: string, mimeType?: string): string => {
   return 'jpg';
 };
 
+const isWebBlobFile = (value: unknown): value is Blob => {
+  return typeof Blob !== 'undefined' && value instanceof Blob;
+};
+
 export default function ManageActivityScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -58,36 +72,90 @@ export default function ManageActivityScreen() {
     [activities, id]
   );
 
-  const createUploadBlob = async (image: PickedImage): Promise<Blob> => {
-    if (image.base64) {
-      const mimeType = image.mimeType || 'image/jpeg';
-      const dataUri = `data:${mimeType};base64,${image.base64}`;
-      const response = await fetch(dataUri);
-      return response.blob();
+  const createUploadPayload = async (image: PickedImage): Promise<UploadPayload> => {
+    if (typeof image.fileSize === 'number' && image.fileSize <= 0) {
+      throw new Error('Selected image is empty. Please pick a different photo.');
     }
 
-    const response = await fetch(image.uri);
-    return response.blob();
+    if (isWebBlobFile(image.file)) {
+      if (image.file.size === 0) {
+        throw new Error('Selected image is empty. Please pick a different photo.');
+      }
+
+      return {
+        body: image.file,
+        contentType: image.file.type || image.mimeType || 'image/jpeg',
+      };
+    }
+
+    // On native devices, prefer picker base64 to avoid zero-byte fetch(uri) blobs.
+    if (Platform.OS !== 'web') {
+      const base64 = image.base64 ?? await readAsStringAsync(image.uri, { encoding: 'base64' });
+      if (!base64 || base64.length === 0) {
+        throw new Error('Could not read selected image data.');
+      }
+
+      const decoded = decode(base64);
+      if (decoded.byteLength === 0) {
+        throw new Error('Selected image decoded to an empty file.');
+      }
+
+      return {
+        body: decoded,
+        contentType: image.mimeType || 'image/jpeg',
+      };
+    }
+
+    try {
+      // Try fetch first (works on web/localhost)
+      const response = await fetch(image.uri);
+      const blob = await response.blob();
+
+      if (!blob || blob.size === 0) {
+        throw new Error('Image fetch returned an empty file.');
+      }
+
+      return {
+        body: blob,
+        contentType: blob.type || image.mimeType || 'image/jpeg',
+      };
+    } catch (err) {
+      // Prefer picker-provided base64 on native because ph:// URIs can fail fetch/read.
+      const base64 = image.base64 ?? await readAsStringAsync(image.uri, { encoding: 'base64' });
+      if (!base64 || base64.length === 0) {
+        throw new Error('Could not read selected image data.');
+      }
+
+      const decoded = decode(base64);
+      if (decoded.byteLength === 0) {
+        throw new Error('Selected image decoded to an empty file.');
+      }
+
+      return {
+        body: decoded,
+        contentType: image.mimeType || 'image/jpeg',
+      };
+    }
   };
 
   const uploadActivityImage = async (image: PickedImage): Promise<string> => {
-    const blob = await createUploadBlob(image);
-    const extension = deriveImageExtension(image.uri, image.mimeType ?? blob.type);
+    const payload = await createUploadPayload(image);
+    const extension = deriveImageExtension(image.uri, image.mimeType ?? payload.contentType);
     const randomSuffix = Math.random().toString(36).slice(2, 8);
-    const path = `activity-images/${user?.uid ?? 'anon'}-${activity?.id}-${Date.now()}-${randomSuffix}.${extension}`;
+    const path = `activity-covers/${user?.uid ?? 'anon'}-${activity?.id}-${Date.now()}-${randomSuffix}.${extension}`;
 
     const { error: uploadError } = await supabase.storage
-      .from('chat-images')
-      .upload(path, blob, {
+      .from('activity-images')
+      .upload(path, payload.body, {
         upsert: false,
-        contentType: blob.type || image.mimeType || 'image/jpeg',
+        contentType: payload.contentType,
       });
 
     if (uploadError) {
       throw uploadError;
     }
 
-    return supabase.storage.from('chat-images').getPublicUrl(path).data.publicUrl;
+    return supabase.storage.from('activity-images').getPublicUrl(path).data.publicUrl;
   };
 
   const handleAddImage = async () => {
@@ -102,7 +170,7 @@ export default function ManageActivityScreen() {
         mediaTypes: ['images'],
         allowsEditing: true,
         quality: 0.85,
-        base64: true,
+        base64: Platform.OS !== 'web',
       });
 
       if (result.canceled || !result.assets?.[0]?.uri) {
@@ -113,17 +181,23 @@ export default function ManageActivityScreen() {
       const picked = result.assets[0];
       const imageUrl = await uploadActivityImage({
         uri: picked.uri,
-        base64: picked.base64,
         mimeType: picked.mimeType,
+        base64: picked.base64,
+        file: (picked as any).file,
+        fileSize: picked.fileSize,
       });
 
       // Update activity with new image
       const currentImages = activity?.images ?? [];
       const updatedImages = [...currentImages, imageUrl];
+      const nextCoverImage = activity?.coverImage ?? updatedImages[0] ?? null;
 
       const { error } = await supabase
         .from('activities')
-        .update({ images: updatedImages })
+        .update({
+          images: updatedImages,
+          cover_image: nextCoverImage,
+        })
         .eq('id', id);
 
       if (error) throw error;
@@ -150,10 +224,14 @@ export default function ManageActivityScreen() {
           onPress: async () => {
             try {
               const updatedImages = (activity?.images ?? []).filter((img) => img !== imageUrl);
+              const nextCoverImage = updatedImages[0] ?? null;
 
               const { error } = await supabase
                 .from('activities')
-                .update({ images: updatedImages })
+                .update({
+                  images: updatedImages,
+                  cover_image: nextCoverImage,
+                })
                 .eq('id', id);
 
               if (error) throw error;
