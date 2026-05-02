@@ -5,7 +5,7 @@ import { makeRedirectUri } from 'expo-auth-session';
 import Constants from 'expo-constants';
 import * as Linking from 'expo-linking';
 import { useAuthStore } from '../store/authStore';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseConfig } from '../lib/supabase';
 import { queryClient } from '../lib/queryClient';
 import type { User } from '../types';
 
@@ -127,8 +127,8 @@ async function finalizeOAuthCallbackUrl(
 }
 
 async function isGoogleProviderEnabled() {
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_KEY;
+  const supabaseUrl = supabaseConfig.url;
+  const supabaseKey = supabaseConfig.anonKey;
 
   if (!supabaseUrl || !supabaseKey) {
     return true;
@@ -201,6 +201,7 @@ async function resolveSessionUser(session: any, setUser: (user: User | null) => 
 
 export async function signOutAndResetSession() {
   await supabase.auth.signOut({ scope: 'local' });
+
   queryClient.clear();
   useAuthStore.getState().signOut();
 }
@@ -305,6 +306,7 @@ export function useAuth() {
       try {
         setLoading(true);
         setError(null);
+
         const normalizedEmail = email.trim().toLowerCase();
         const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
           email: normalizedEmail,
@@ -338,6 +340,7 @@ export function useAuth() {
       try {
         setLoading(true);
         setError(null);
+
         const normalizedEmail = data.email.trim().toLowerCase();
 
         // Fast guard to avoid duplicate account attempts with the same email.
