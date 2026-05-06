@@ -32,6 +32,7 @@ export default function SignUpScreen() {
   const [password, setPassword] = useState('');
   const [ageRange, setAgeRange] = useState('18-24');
   const [interests, setInterests] = useState<string[]>([]);
+  const [consentChecked, setConsentChecked] = useState(false);
   const [showAgeDropdown, setShowAgeDropdown] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
@@ -56,6 +57,8 @@ export default function SignUpScreen() {
       newErrors.password = 'Password must be at least 6 characters';
     if (interests.length === 0)
       newErrors.interests = 'Select at least one interest';
+    if (!consentChecked)
+      newErrors.consent = 'Please agree before creating your account';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -87,7 +90,8 @@ export default function SignUpScreen() {
     email.trim() &&
     password.trim() &&
     password.length >= 6 &&
-    interests.length > 0;
+    interests.length > 0 &&
+    consentChecked;
 
   return (
     <KeyboardAvoidingView
@@ -208,6 +212,31 @@ export default function SignUpScreen() {
               />
             ))}
           </View>
+        </Animated.View>
+
+        <Animated.View entering={FadeInDown.delay(425).springify()}>
+          <TouchableOpacity
+            style={styles.consentRow}
+            onPress={() => setConsentChecked((prev) => !prev)}
+            activeOpacity={0.85}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: consentChecked }}
+          >
+            <Ionicons
+              name={consentChecked ? 'checkbox' : 'square-outline'}
+              size={20}
+              color={consentChecked ? Colors.accent : Colors.slate}
+              style={styles.consentIcon}
+            />
+            <View style={styles.consentTextWrap}>
+              <Text style={styles.consentText}>
+                By signing up, I agree to the data collection practices and consent to the
+                processing of my information in accordance with the Privacy Policy and Terms of
+                Service.
+              </Text>
+              {errors.consent && <Text style={styles.errorText}>{errors.consent}</Text>}
+            </View>
+          </TouchableOpacity>
         </Animated.View>
 
         <Animated.View entering={FadeInDown.delay(450).springify()}>
@@ -358,6 +387,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.danger,
     marginBottom: Spacing.sm,
+  },
+  consentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: Spacing.md,
+  },
+  consentIcon: {
+    marginTop: 1,
+    marginRight: Spacing.sm,
+  },
+  consentTextWrap: {
+    flex: 1,
+  },
+  consentText: {
+    fontFamily: Typography.body,
+    fontSize: 12,
+    lineHeight: 18,
+    color: Colors.slate,
   },
   submitBtn: {
     marginTop: Spacing.sm,
