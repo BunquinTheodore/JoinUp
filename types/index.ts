@@ -1,5 +1,10 @@
 export interface User {
   uid: string;
+  email: string;
+  emailVerified: boolean;
+  taskVerified: boolean;
+  isVerified: boolean;
+  verificationMethod: 'none' | 'email' | 'task';
   displayName: string;
   photoURL: string;
   bio: string;

@@ -687,6 +687,11 @@ export function useActivities() {
 
   const joinActivity = useCallback(async (activityId: string, userId: string): Promise<boolean> => {
     try {
+      if (!user?.isVerified) {
+        setError('Verification required. Verify your account before joining activities.');
+        return false;
+      }
+
       const existingStatus = joinStatuses[activityId];
       if (existingStatus && existingStatus !== 'cancelled') {
         return false;
@@ -751,7 +756,7 @@ export function useActivities() {
       setError(err.message ?? 'Failed to join activity');
       return false;
     }
-  }, [activities, delayRangeMs, isLegacyParticipantSchemaError, isMockActivity, joinStatuses, persistLocalJoinStatusHistory, scheduleMockDecision, syncJoinedActivities]);
+  }, [activities, delayRangeMs, isLegacyParticipantSchemaError, isMockActivity, joinStatuses, persistLocalJoinStatusHistory, scheduleMockDecision, syncJoinedActivities, user?.isVerified]);
 
   const leaveActivity = useCallback(async (activityId: string, userId: string): Promise<boolean> => {
     try {

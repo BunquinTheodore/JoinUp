@@ -149,9 +149,28 @@ async function isGoogleProviderEnabled() {
   return !!settings?.external?.google;
 }
 
-function mapProfile(id: string, profile: any): User {
+function mapProfile(id: string, profile: any, sessionEmail: string, emailVerified: boolean): User {
+  const interests = Array.isArray(profile.interests) ? profile.interests : [];
+  const taskVerified =
+    String(profile.display_name ?? '').trim().length >= 2 &&
+    String(profile.location ?? '').trim().length >= 2 &&
+    String(profile.bio ?? '').trim().length >= 20 &&
+    interests.length >= 2 &&
+    String(profile.photo_url ?? '').trim().length > 0;
+  const isVerified = emailVerified || taskVerified;
+  const verificationMethod: 'none' | 'email' | 'task' = emailVerified
+    ? 'email'
+    : taskVerified
+      ? 'task'
+      : 'none';
+
   return {
     uid: id,
+    email: profile.email ?? sessionEmail ?? '',
+    emailVerified,
+    taskVerified,
+    isVerified,
+    verificationMethod,
     displayName: profile.display_name ?? '',
     photoURL: profile.photo_url ?? '',
     bio: profile.bio ?? '',
@@ -172,6 +191,8 @@ async function resolveSessionUser(session: any, setUser: (user: User | null) => 
     return;
   }
 
+  const emailVerified = !!session.user.email_confirmed_at;
+
   const { data: profile } = await supabase
     .from('profiles')
     .select('*')
@@ -179,12 +200,17 @@ async function resolveSessionUser(session: any, setUser: (user: User | null) => 
     .maybeSingle();
 
   if (profile) {
-    setUser(mapProfile(session.user.id, profile));
+    setUser(mapProfile(session.user.id, profile, session.user.email ?? '', emailVerified));
     return;
   }
 
   setUser({
     uid: session.user.id,
+    email: session.user.email ?? '',
+    emailVerified,
+    taskVerified: false,
+    isVerified: emailVerified,
+    verificationMethod: emailVerified ? 'email' : 'none',
     displayName: session.user.user_metadata?.display_name ?? '',
     photoURL: session.user.user_metadata?.avatar_url ?? '',
     bio: '',

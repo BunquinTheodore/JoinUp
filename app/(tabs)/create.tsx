@@ -113,6 +113,7 @@ export default function CreateActivityScreen() {
   const [selectedImages, setSelectedImages] = useState<PickedImage[]>([]);
   const [locationCoords, setLocationCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
+  const isVerified = !!user?.isVerified;
 
   const parsedMaxSlots = useMemo(() => Number.parseInt(maxSlots, 10), [maxSlots]);
 
@@ -364,6 +365,14 @@ export default function CreateActivityScreen() {
       return;
     }
 
+    if (!isVerified) {
+      Alert.alert(
+        'Verification required',
+        'You need a verified account before posting an activity. Complete your profile safety task or verify from your email.'
+      );
+      return;
+    }
+
     const validationErrors = validateForm();
     setErrors(validationErrors);
 
@@ -456,6 +465,14 @@ export default function CreateActivityScreen() {
         <Animated.View entering={FadeInDown.delay(100).springify()}>
           <Text style={styles.heading}>Create Activity</Text>
           <Text style={styles.subtitle}>Plan something awesome</Text>
+          {!isVerified ? (
+            <View style={styles.verificationNotice}>
+              <Ionicons name="shield-checkmark-outline" size={16} color={Colors.warning} />
+              <Text style={styles.verificationNoticeText}>
+                Verification required to post activities.
+              </Text>
+            </View>
+          ) : null}
         </Animated.View>
 
         {/* Images Gallery */}
@@ -633,7 +650,7 @@ export default function CreateActivityScreen() {
             title="Create Activity"
             onPress={handleSubmit}
             loading={isSubmitting || isUploadingCover}
-            disabled={!isValid}
+            disabled={!isValid || !isVerified}
             style={styles.submitBtn}
           />
         </Animated.View>
@@ -663,6 +680,22 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.slate,
     marginBottom: Spacing.lg,
+  },
+  verificationNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    backgroundColor: Colors.warning + '1A',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.pill,
+    marginBottom: Spacing.md,
+    alignSelf: 'flex-start',
+  },
+  verificationNoticeText: {
+    fontFamily: Typography.bodyMed,
+    fontSize: 12,
+    color: Colors.warning,
   },
   imagesSection: {
     backgroundColor: Colors.white,

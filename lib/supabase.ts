@@ -41,16 +41,14 @@ if (!isSupabaseConfigured) {
 }
 
 const createThrowingProxy = (message: string) =>
-  new Proxy(
-    {},
-    {
-      get() {
-        return () => {
-          throw new Error(message);
-        };
-      },
-    }
-  );
+  new Proxy(function () {}, {
+    get() {
+      return createThrowingProxy(message);
+    },
+    apply() {
+      throw new Error(message);
+    },
+  });
 
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseConfig.url!, supabaseConfig.anonKey!, {

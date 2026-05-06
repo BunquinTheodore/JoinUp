@@ -55,6 +55,7 @@ export default function ActivityDetailScreen() {
   const joinStatus = getJoinStatus(activity.id);
   const isParticipant = joinStatus === 'approved';
   const isFull = activity.currentSlots <= 0;
+  const isVerified = !!user?.isVerified;
   const joined = activity.maxSlots - activity.currentSlots;
   const dateStr = activity.dateTime
     ? format(new Date(activity.dateTime), 'EEEE, MMMM d · h:mm a')
@@ -62,6 +63,14 @@ export default function ActivityDetailScreen() {
 
   const handleJoin = async () => {
     if (!user) return;
+    if (!isVerified) {
+      Alert.alert(
+        'Verification required',
+        'Verify your account first. You can verify by confirming your email or completing the safety profile task.'
+      );
+      return;
+    }
+
     setIsJoining(true);
     try {
       const joined = await joinActivity(activity.id, user.uid);
@@ -275,10 +284,10 @@ export default function ActivityDetailScreen() {
           />
         ) : (
           <PrimaryButton
-            title={isFull ? 'Activity Full' : 'Join Activity'}
+            title={isFull ? 'Activity Full' : !isVerified ? 'Verify to Join' : 'Join Activity'}
             onPress={handleJoin}
             loading={isJoining}
-            disabled={isFull}
+            disabled={isFull || !isVerified}
             style={styles.joinBtn}
           />
         )}

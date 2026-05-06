@@ -93,6 +93,24 @@ export default function ProfileScreen() {
   const [hostedActivities, setHostedActivities] = useState<HistoryActivity[]>([]);
   const [pastActivities, setPastActivities] = useState<HistoryActivity[]>([]);
 
+  const taskVerified = useMemo(() => {
+    const interests = user?.interests ?? [];
+    return (
+      !!user?.displayName?.trim() &&
+      !!user?.location?.trim() &&
+      (user?.bio?.trim()?.length ?? 0) >= 20 &&
+      interests.length >= 2 &&
+      !!user?.photoURL?.trim()
+    );
+  }, [user?.bio, user?.displayName, user?.interests, user?.location, user?.photoURL]);
+
+  const accountVerified = !!user?.emailVerified || taskVerified;
+  const verificationMessage = user?.emailVerified
+    ? 'Verified by email'
+    : taskVerified
+      ? 'Verified by safety task'
+      : 'Not verified yet';
+
   useEffect(() => {
     setEditName(user?.displayName ?? '');
     setEditLocation(user?.location ?? '');
@@ -506,6 +524,27 @@ export default function ProfileScreen() {
             {user?.displayName ?? 'User'}
           </Text>
           <Text style={styles.location}>{user?.location || 'No location set'}</Text>
+          <Text style={styles.emailText}>{user?.email || 'No email available'}</Text>
+          <View
+            style={[
+              styles.verificationBadge,
+              accountVerified ? styles.verificationBadgeVerified : styles.verificationBadgePending,
+            ]}
+          >
+            <Ionicons
+              name={accountVerified ? 'checkmark-circle' : 'alert-circle-outline'}
+              size={14}
+              color={accountVerified ? Colors.success : Colors.warning}
+            />
+            <Text
+              style={[
+                styles.verificationBadgeText,
+                accountVerified ? styles.verificationBadgeTextVerified : styles.verificationBadgeTextPending,
+              ]}
+            >
+              {verificationMessage}
+            </Text>
+          </View>
           <TouchableOpacity
             style={styles.editBtn}
             onPress={() => setShowEditSheet(true)}
@@ -962,6 +1001,12 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontFamily: Typography.bodyBold,
+  emailText: {
+    fontFamily: Typography.body,
+    fontSize: 13,
+    color: Colors.slate + 'CC',
+    marginBottom: Spacing.md,
+  },
     fontSize: 16,
     color: Colors.accent,
     marginBottom: Spacing.sm,
@@ -1012,7 +1057,32 @@ const styles = StyleSheet.create({
     fontFamily: Typography.body,
     fontSize: 14,
     color: Colors.slate,
-    textAlign: 'center',
+    marginBottom: Spacing.sm,
+  },
+  verificationBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.round,
+    marginBottom: Spacing.md,
+  },
+  verificationBadgeVerified: {
+    backgroundColor: Colors.success + '14',
+  },
+  verificationBadgePending: {
+    backgroundColor: Colors.warning + '14',
+  },
+  verificationBadgeText: {
+    fontFamily: Typography.body,
+    fontSize: 12,
+  },
+  verificationBadgeTextVerified: {
+    color: Colors.success,
+  },
+  verificationBadgeTextPending: {
+    color: Colors.warning,
     width: '100%',
     paddingVertical: Spacing.xl,
   },
