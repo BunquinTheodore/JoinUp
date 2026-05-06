@@ -34,6 +34,7 @@ export default function SignUpScreen() {
   const [showAgeDropdown, setShowAgeDropdown] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const toggleInterest = (interest: string) => {
     setInterests((prev) =>
@@ -61,6 +62,7 @@ export default function SignUpScreen() {
   const handleSubmit = async () => {
     if (!validate()) return;
     setInfoMessage(null);
+    setSubmitError(null);
 
     try {
       const result = await signUp({ fullName, email, password, ageRange, interests });
@@ -71,7 +73,12 @@ export default function SignUpScreen() {
       }
 
       router.replace('/(tabs)');
-    } catch {}
+    } catch (err: any) {
+      const message = String(err?.message ?? '').trim();
+      if (message) {
+        setSubmitError(message);
+      }
+    }
   };
 
   const isValid =
@@ -97,9 +104,9 @@ export default function SignUpScreen() {
           <Text style={styles.subtitle}>Join the community and start connecting</Text>
         </Animated.View>
 
-        {error && (
+        {(submitError || error) && (
           <Animated.View entering={FadeInDown.springify()} style={styles.errorBanner}>
-            <Text style={styles.errorBannerText}>{error}</Text>
+            <Text style={styles.errorBannerText}>{submitError || error}</Text>
           </Animated.View>
         )}
 

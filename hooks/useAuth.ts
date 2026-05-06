@@ -5,7 +5,7 @@ import { makeRedirectUri } from 'expo-auth-session';
 import Constants from 'expo-constants';
 import * as Linking from 'expo-linking';
 import { useAuthStore } from '../store/authStore';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseConfig } from '../lib/supabase';
 import { queryClient } from '../lib/queryClient';
 import type { User } from '../types';
 
@@ -13,6 +13,27 @@ WebBrowser.maybeCompleteAuthSession();
 
 const GOOGLE_AUTH_TIMEOUT_MS = 45000;
 const EMAIL_SIGN_IN_TIMEOUT_MS = 15000;
+
+function isLikelyExistingEmailSignUpResponse(authData: any, normalizedEmail: string) {
+  const user = authData?.user;
+
+  if (authData?.session || !user) {
+    return false;
+  }
+
+  const identities = (user as any)?.identities;
+  if (Array.isArray(identities) && identities.length === 0) {
+    return true;
+  }
+
+  // Supabase can return the existing user object without throwing.
+  // If the account is clearly older than "just now", treat this as duplicate email.
+  const returnedEmail = String((user as any)?.email ?? '').trim().toLowerCase();
+  const createdAtMs = Date.parse(String((user as any)?.created_at ?? ''));
+  const looksOld = Number.isFinite(createdAtMs) && Date.now() - createdAtMs > 60_000;
+
+  return returnedEmail === normalizedEmail && looksOld;
+}
 
 function isExpoGoRuntime() {
   if (Platform.OS === 'web') {
@@ -107,8 +128,8 @@ async function finalizeOAuthCallbackUrl(
 }
 
 async function isGoogleProviderEnabled() {
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_KEY;
+  const supabaseUrl = supabaseConfig.url;
+  const supabaseKey = supabaseConfig.anonKey;
 
   if (!supabaseUrl || !supabaseKey) {
     return true;
@@ -129,9 +150,28 @@ async function isGoogleProviderEnabled() {
   return !!settings?.external?.google;
 }
 
-function mapProfile(id: string, profile: any): User {
+function mapProfile(id: string, profile: any, sessionEmail: string, emailVerified: boolean): User {
+  const interests = Array.isArray(profile.interests) ? profile.interests : [];
+  const taskVerified =
+    String(profile.display_name ?? '').trim().length >= 2 &&
+    String(profile.location ?? '').trim().length >= 2 &&
+    String(profile.bio ?? '').trim().length >= 20 &&
+    interests.length >= 2 &&
+    String(profile.photo_url ?? '').trim().length > 0;
+  const isVerified = emailVerified || taskVerified;
+  const verificationMethod: 'none' | 'email' | 'task' = emailVerified
+    ? 'email'
+    : taskVerified
+      ? 'task'
+      : 'none';
+
   return {
     uid: id,
+    email: profile.email ?? sessionEmail ?? '',
+    emailVerified,
+    taskVerified,
+    isVerified,
+    verificationMethod,
     displayName: profile.display_name ?? '',
     photoURL: profile.photo_url ?? '',
     bio: profile.bio ?? '',
@@ -152,6 +192,8 @@ async function resolveSessionUser(session: any, setUser: (user: User | null) => 
     return;
   }
 
+  const emailVerified = !!session.user.email_confirmed_at;
+
   const { data: profile } = await supabase
     .from('profiles')
     .select('*')
@@ -159,12 +201,17 @@ async function resolveSessionUser(session: any, setUser: (user: User | null) => 
     .maybeSingle();
 
   if (profile) {
-    setUser(mapProfile(session.user.id, profile));
+    setUser(mapProfile(session.user.id, profile, session.user.email ?? '', emailVerified));
     return;
   }
 
   setUser({
     uid: session.user.id,
+    email: session.user.email ?? '',
+    emailVerified,
+    taskVerified: false,
+    isVerified: emailVerified,
+    verificationMethod: emailVerified ? 'email' : 'none',
     displayName: session.user.user_metadata?.display_name ?? '',
     photoURL: session.user.user_metadata?.avatar_url ?? '',
     bio: '',
@@ -181,6 +228,7 @@ async function resolveSessionUser(session: any, setUser: (user: User | null) => 
 
 export async function signOutAndResetSession() {
   await supabase.auth.signOut({ scope: 'local' });
+
   queryClient.clear();
   useAuthStore.getState().signOut();
 }
@@ -285,6 +333,7 @@ export function useAuth() {
       try {
         setLoading(true);
         setError(null);
+
         const normalizedEmail = email.trim().toLowerCase();
         const { data: authData, error: authError } = (await Promise.race([
           supabase.auth.signInWithPassword({
@@ -325,6 +374,7 @@ export function useAuth() {
       try {
         setLoading(true);
         setError(null);
+
         const normalizedEmail = data.email.trim().toLowerCase();
 
         // Fast guard to avoid duplicate account attempts with the same email.
@@ -362,11 +412,10 @@ export function useAuth() {
 
         // When email-confirmation is enabled, Supabase can return a "fake" user for
         // already-registered emails (no session + empty identities) instead of throwing.
-        const isExistingEmailResponse =
-          !authData.session &&
-          !!authData.user &&
-          Array.isArray((authData.user as any).identities) &&
-          (authData.user as any).identities.length === 0;
+        const isExistingEmailResponse = isLikelyExistingEmailSignUpResponse(
+          authData,
+          normalizedEmail
+        );
 
         if (isExistingEmailResponse) {
           throw new Error('This email is already registered. Please sign in instead.');
@@ -386,11 +435,12 @@ export function useAuth() {
         setUser(null);
         return { requiresEmailConfirmation: true };
       } catch (err: any) {
-        console.error('Sign up error:', err);
         const rawMessage = String(err?.message ?? '').toLowerCase();
         const duplicateEmail =
+          rawMessage.includes('user already registered') ||
           rawMessage.includes('already registered') ||
           rawMessage.includes('already exists') ||
+          rawMessage.includes('email address is already in use') ||
           rawMessage.includes('duplicate key');
 
         if (duplicateEmail) {

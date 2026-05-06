@@ -17,6 +17,8 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as ImagePicker from 'expo-image-picker';
+import { readAsStringAsync } from 'expo-file-system/legacy';
+import { decode } from 'base64-arraybuffer';
 import * as Location from 'expo-location';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
 import { InputField } from '../../components/ui/InputField';
@@ -30,6 +32,39 @@ import { format } from 'date-fns';
 
 const CATEGORIES = ['Fitness', 'Study', 'Café', 'Outdoors', 'Gaming', 'Social', 'Food', 'Other'];
 type Category = Activity['category'];
+type PickedImage = {
+  uri: string;
+  mimeType?: string | null;
+  base64?: string | null;
+  file?: Blob;
+  fileSize?: number;
+};
+
+type UploadPayload = {
+  body: Blob | ArrayBuffer;
+  contentType: string;
+};
+
+const deriveImageExtension = (uri: string, mimeType?: string): string => {
+  if (mimeType?.startsWith('image/')) {
+    const fromMime = mimeType.split('/')[1]?.toLowerCase();
+    if (fromMime) {
+      return fromMime === 'jpeg' ? 'jpg' : fromMime;
+    }
+  }
+
+  const sanitizedUri = uri.split('?')[0].toLowerCase();
+  const match = sanitizedUri.match(/\.(jpg|jpeg|png|webp|heic|heif)$/);
+  if (match?.[1]) {
+    return match[1] === 'jpeg' ? 'jpg' : match[1];
+  }
+
+  return 'jpg';
+};
+
+const isWebBlobFile = (value: unknown): value is Blob => {
+  return typeof Blob !== 'undefined' && value instanceof Blob;
+};
 
 type FormErrors = {
   title?: string;
@@ -75,9 +110,10 @@ export default function CreateActivityScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploadingCover, setIsUploadingCover] = useState(false);
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
-  const [selectedImageUris, setSelectedImageUris] = useState<string[]>([]);
+  const [selectedImages, setSelectedImages] = useState<PickedImage[]>([]);
   const [locationCoords, setLocationCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
+  const isVerified = !!user?.isVerified;
 
   const parsedMaxSlots = useMemo(() => Number.parseInt(maxSlots, 10), [maxSlots]);
 
@@ -118,27 +154,93 @@ export default function CreateActivityScreen() {
     return nextErrors;
   };
 
-  const uploadActivityImages = async (uris: string[]): Promise<string[]> => {
+  const createUploadPayload = async (image: PickedImage): Promise<UploadPayload> => {
+    if (typeof image.fileSize === 'number' && image.fileSize <= 0) {
+      throw new Error('Selected image is empty. Please pick a different photo.');
+    }
+
+    if (isWebBlobFile(image.file)) {
+      if (image.file.size === 0) {
+        throw new Error('Selected image is empty. Please pick a different photo.');
+      }
+
+      return {
+        body: image.file,
+        contentType: image.file.type || image.mimeType || 'image/jpeg',
+      };
+    }
+
+    // On native devices, prefer picker base64 to avoid zero-byte fetch(uri) blobs.
+    if (Platform.OS !== 'web') {
+      const base64 = image.base64 ?? await readAsStringAsync(image.uri, { encoding: 'base64' });
+      if (!base64 || base64.length === 0) {
+        throw new Error('Could not read selected image data.');
+      }
+
+      const decoded = decode(base64);
+      if (decoded.byteLength === 0) {
+        throw new Error('Selected image decoded to an empty file.');
+      }
+
+      return {
+        body: decoded,
+        contentType: image.mimeType || 'image/jpeg',
+      };
+    }
+
+    try {
+      // Try fetch first (works on web/localhost)
+      const response = await fetch(image.uri);
+      const blob = await response.blob();
+
+      if (!blob || blob.size === 0) {
+        throw new Error('Image fetch returned an empty file.');
+      }
+
+      return {
+        body: blob,
+        contentType: blob.type || image.mimeType || 'image/jpeg',
+      };
+    } catch (err) {
+      // Prefer picker-provided base64 on native because ph:// URIs can fail fetch/read.
+      const base64 = image.base64 ?? await readAsStringAsync(image.uri, { encoding: 'base64' });
+      if (!base64 || base64.length === 0) {
+        throw new Error('Could not read selected image data.');
+      }
+
+      const decoded = decode(base64);
+      if (decoded.byteLength === 0) {
+        throw new Error('Selected image decoded to an empty file.');
+      }
+
+      return {
+        body: decoded,
+        contentType: image.mimeType || 'image/jpeg',
+      };
+    }
+  };
+
+  const uploadActivityImages = async (images: PickedImage[]): Promise<string[]> => {
     const uploadedUrls: string[] = [];
 
-    for (const uri of uris) {
-      const response = await fetch(uri);
-      const blob = await response.blob();
-      const extension = (uri.split('.').pop() ?? 'jpg').split('?')[0].toLowerCase();
-      const path = `activity-covers/${user?.uid ?? 'anon'}-${Date.now()}-${Math.random()}.${extension}`;
+    for (const image of images) {
+      const payload = await createUploadPayload(image);
+      const extension = deriveImageExtension(image.uri, image.mimeType ?? payload.contentType);
+      const randomSuffix = Math.random().toString(36).slice(2, 8);
+      const path = `activity-covers/${user?.uid ?? 'anon'}-${Date.now()}-${randomSuffix}.${extension}`;
 
       const { error: uploadError } = await supabase.storage
-        .from('chat-images')
-        .upload(path, blob, {
+        .from('activity-images')
+        .upload(path, payload.body, {
           upsert: false,
-          contentType: blob.type || 'image/jpeg',
+          contentType: payload.contentType,
         });
 
       if (uploadError) {
         throw uploadError;
       }
 
-      const url = supabase.storage.from('chat-images').getPublicUrl(path).data.publicUrl;
+      const url = supabase.storage.from('activity-images').getPublicUrl(path).data.publicUrl;
       uploadedUrls.push(url);
     }
 
@@ -193,6 +295,7 @@ export default function CreateActivityScreen() {
         mediaTypes: ['images'],
         allowsEditing: true,
         quality: 0.85,
+        base64: Platform.OS !== 'web',
       });
 
       if (result.canceled || !result.assets?.[0]?.uri) {
@@ -200,15 +303,24 @@ export default function CreateActivityScreen() {
       }
 
       // Add the new image to the array
-      const newUri = result.assets[0].uri;
-      setSelectedImageUris((prev) => [...prev, newUri]);
+      const picked = result.assets[0];
+      setSelectedImages((prev) => [
+        ...prev,
+        {
+          uri: picked.uri,
+          mimeType: picked.mimeType,
+          base64: picked.base64,
+          file: (picked as any).file,
+          fileSize: picked.fileSize,
+        },
+      ]);
     } catch {
       Alert.alert('Image unavailable', 'Could not select this image right now.');
     }
   };
 
   const handleRemoveImage = (index: number) => {
-    setSelectedImageUris((prev) => prev.filter((_, i) => i !== index));
+    setSelectedImages((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleDateChange = (_event: DateTimePickerEvent, selectedDate?: Date) => {
@@ -253,6 +365,14 @@ export default function CreateActivityScreen() {
       return;
     }
 
+    if (!isVerified) {
+      Alert.alert(
+        'Verification required',
+        'You need a verified account before posting an activity. Complete your profile safety task or verify from your email.'
+      );
+      return;
+    }
+
     const validationErrors = validateForm();
     setErrors(validationErrors);
 
@@ -266,10 +386,10 @@ export default function CreateActivityScreen() {
       let coverImageUrl: string | null = null;
       let activityImages: string[] = [];
 
-      if (selectedImageUris.length > 0) {
+      if (selectedImages.length > 0) {
         setIsUploadingCover(true);
         try {
-          activityImages = await uploadActivityImages(selectedImageUris);
+          activityImages = await uploadActivityImages(selectedImages);
           coverImageUrl = activityImages[0]; // Use first image as cover
         } catch {
           Alert.alert('Image upload failed', 'The activity will still be created without images.');
@@ -345,20 +465,28 @@ export default function CreateActivityScreen() {
         <Animated.View entering={FadeInDown.delay(100).springify()}>
           <Text style={styles.heading}>Create Activity</Text>
           <Text style={styles.subtitle}>Plan something awesome</Text>
+          {!isVerified ? (
+            <View style={styles.verificationNotice}>
+              <Ionicons name="shield-checkmark-outline" size={16} color={Colors.warning} />
+              <Text style={styles.verificationNoticeText}>
+                Verification required to post activities.
+              </Text>
+            </View>
+          ) : null}
         </Animated.View>
 
         {/* Images Gallery */}
         <Animated.View entering={FadeInDown.delay(150).springify()}>
           <View style={styles.imagesSection}>
-            {selectedImageUris.length > 0 ? (
+            {selectedImages.length > 0 ? (
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 style={styles.imageScrollView}
               >
-                {selectedImageUris.map((uri, index) => (
+                {selectedImages.map((image, index) => (
                   <View key={index} style={styles.imageContainer}>
-                    <Image source={{ uri }} style={styles.selectedImage} resizeMode="cover" />
+                    <Image source={{ uri: image.uri }} style={styles.selectedImage} resizeMode="cover" />
                     <TouchableOpacity
                       style={styles.removeImageBtn}
                       onPress={() => handleRemoveImage(index)}
@@ -372,7 +500,7 @@ export default function CreateActivityScreen() {
             <TouchableOpacity style={styles.addImageButton} onPress={handleImagePick}>
               <Ionicons name="add-circle-outline" size={24} color={Colors.accent} />
               <Text style={styles.addImageText}>
-                {selectedImageUris.length > 0 ? 'Add More Photos' : 'Add Cover Photo'}
+                {selectedImages.length > 0 ? 'Add More Photos' : 'Add Cover Photo'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -522,7 +650,7 @@ export default function CreateActivityScreen() {
             title="Create Activity"
             onPress={handleSubmit}
             loading={isSubmitting || isUploadingCover}
-            disabled={!isValid}
+            disabled={!isValid || !isVerified}
             style={styles.submitBtn}
           />
         </Animated.View>
@@ -552,6 +680,22 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.slate,
     marginBottom: Spacing.lg,
+  },
+  verificationNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    backgroundColor: Colors.warning + '1A',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.pill,
+    marginBottom: Spacing.md,
+    alignSelf: 'flex-start',
+  },
+  verificationNoticeText: {
+    fontFamily: Typography.bodyMed,
+    fontSize: 12,
+    color: Colors.warning,
   },
   imagesSection: {
     backgroundColor: Colors.white,

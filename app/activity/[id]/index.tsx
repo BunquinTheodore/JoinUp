@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Alert,
   Image,
+  Dimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,6 +27,7 @@ export default function ActivityDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const galleryWidth = Dimensions.get('window').width - Spacing.md * 2;
   const { activities, joinActivity, leaveActivity, getJoinStatus, canAccessChat, deleteRejectedJoin } = useActivities();
   const user = useAuthStore((s) => s.user);
 
@@ -53,6 +55,7 @@ export default function ActivityDetailScreen() {
   const joinStatus = getJoinStatus(activity.id);
   const isParticipant = joinStatus === 'approved';
   const isFull = activity.currentSlots <= 0;
+  const isVerified = !!user?.isVerified;
   const joined = activity.maxSlots - activity.currentSlots;
   const dateStr = activity.dateTime
     ? format(new Date(activity.dateTime), 'EEEE, MMMM d · h:mm a')
@@ -60,6 +63,14 @@ export default function ActivityDetailScreen() {
 
   const handleJoin = async () => {
     if (!user) return;
+    if (!isVerified) {
+      Alert.alert(
+        'Verification required',
+        'Verify your account first. You can verify by confirming your email or completing the safety profile task.'
+      );
+      return;
+    }
+
     setIsJoining(true);
     try {
       const joined = await joinActivity(activity.id, user.uid);
@@ -123,7 +134,7 @@ export default function ActivityDetailScreen() {
                   <Image
                     key={index}
                     source={{ uri: imageUrl }}
-                    style={styles.galleryImage}
+                    style={[styles.galleryImage, { width: galleryWidth }]}
                     resizeMode="cover"
                   />
                 ))}
@@ -131,7 +142,7 @@ export default function ActivityDetailScreen() {
             ) : activity.coverImage ? (
               <Image
                 source={{ uri: activity.coverImage }}
-                style={styles.galleryImage}
+                style={[styles.galleryImage, { width: galleryWidth }]}
                 resizeMode="cover"
               />
             ) : (
@@ -273,10 +284,10 @@ export default function ActivityDetailScreen() {
           />
         ) : (
           <PrimaryButton
-            title={isFull ? 'Activity Full' : 'Join Activity'}
+            title={isFull ? 'Activity Full' : !isVerified ? 'Verify to Join' : 'Join Activity'}
             onPress={handleJoin}
             loading={isJoining}
-            disabled={isFull}
+            disabled={isFull || !isVerified}
             style={styles.joinBtn}
           />
         )}
@@ -340,7 +351,6 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   galleryImage: {
-    width: 300,
     height: '100%',
   },
   coverPlaceholder: {

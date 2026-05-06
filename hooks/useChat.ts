@@ -269,7 +269,14 @@ export function useChat(activityId: string) {
         .select()
         .single();
 
-      if (!error && data) {
+      if (error) {
+        // Log and throw so callers (UI) can show an error immediately.
+        // eslint-disable-next-line no-console
+        console.error('sendImage error', error);
+        throw error;
+      }
+
+      if (data) {
         setMessages((prev) => {
           if (prev.some((message) => message.id === data.id)) return prev;
           return [

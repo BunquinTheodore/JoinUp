@@ -6,7 +6,35 @@ import { MOCK_ACTIVITIES } from '../lib/mockActivities';
 import { useActivityStore } from '../store/activityStore';
 import { useAuthStore } from '../store/authStore';
 
+function normalizeImageUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+
+  const raw = value.trim();
+  if (!raw) return undefined;
+
+  // Keep valid absolute URLs exactly as-is (including query tokens for signed URLs).
+  if (raw.startsWith('https://') || raw.startsWith('http://')) {
+    return raw;
+  }
+
+  // Salvage legacy malformed URLs such as "...jpg.blob:http://..." by keeping the first valid image URL.
+  const extracted = raw.match(/https?:\/\/[^\s]+?\.(jpg|jpeg|png|webp|heic|heif)(?:\?[^\s]*)?/i);
+  if (extracted?.[0]) {
+    return extracted[0];
+  }
+
+  return undefined;
+}
+
 function mapActivity(row: any): Activity {
+  const normalizedImages = Array.isArray(row.images)
+    ? row.images
+        .map((value: unknown) => normalizeImageUrl(value))
+        .filter((value: unknown): value is string => typeof value === 'string' && value.length > 0)
+    : [];
+
+  const normalizedCoverImage = normalizeImageUrl(row.cover_image) ?? normalizedImages[0];
+
   return {
     id: row.id,
     title: row.title,
@@ -24,8 +52,8 @@ function mapActivity(row: any): Activity {
     hostId: row.host_id,
     hostName: row.host_name ?? '',
     hostPhoto: row.host_photo ?? '',
-    coverImage: row.cover_image ?? undefined,
-    images: Array.isArray(row.images) ? row.images : undefined,
+    coverImage: normalizedCoverImage,
+    images: normalizedImages.length > 0 ? normalizedImages : undefined,
     requiresApproval: row.requires_approval,
     reactions: {
       fire: row.reaction_fire ?? 0,
@@ -35,6 +63,24 @@ function mapActivity(row: any): Activity {
     status: row.status,
     createdAt: row.created_at,
   };
+}
+
+function isMissingImagesColumnError(error: unknown): boolean {
+  const joined = [
+    (error as any)?.code,
+    (error as any)?.message,
+    (error as any)?.details,
+    (error as any)?.hint,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return (
+    joined.includes('pgrst204') ||
+    joined.includes('schema cache') && joined.includes('images') && joined.includes('activities') ||
+    joined.includes('column') && joined.includes('images') && joined.includes('does not exist')
+  );
 }
 
 let runtimeUserId: string | null = null;
@@ -382,6 +428,7 @@ export function useActivities() {
         // Fetch participant IDs for each activity
         const activityIds = data.map((a: any) => a.id);
         let parts: Array<{ activity_id: string; user_id: string }> = [];
+        let activityMediaById: Record<string, { cover_image?: string | null; images?: string[] | null }> = {};
 
         if (activityIds.length > 0) {
           const { data: participantsData, error: participantsError } = await supabase
@@ -392,6 +439,54 @@ export function useActivities() {
 
           if (participantsError) throw participantsError;
           parts = participantsData ?? [];
+
+          try {
+            let mediaRows:
+              | Array<{ id: string; cover_image: string | null; images?: string[] | null }>
+              | null = null;
+
+            let { data: activityMediaRows, error: activityMediaError } = await supabase
+              .from('activities')
+              .select('id, cover_image, images')
+              .in('id', activityIds);
+
+            if (activityMediaError && isMissingImagesColumnError(activityMediaError)) {
+              const { data: fallbackRows, error: fallbackError } = await supabase
+                .from('activities')
+                .select('id, cover_image')
+                .in('id', activityIds);
+
+              if (fallbackError) {
+                throw fallbackError;
+              }
+
+              mediaRows = (fallbackRows ?? []).map((row: any) => ({
+                id: row.id,
+                cover_image: row.cover_image ?? null,
+                images: null,
+              }));
+            } else {
+              if (activityMediaError) {
+                throw activityMediaError;
+              }
+
+              mediaRows = activityMediaRows ?? [];
+            }
+
+            activityMediaById = (mediaRows ?? []).reduce<Record<string, { cover_image?: string | null; images?: string[] | null }>>(
+              (acc, row) => {
+                acc[row.id] = {
+                  cover_image: row.cover_image ?? null,
+                  images: Array.isArray(row.images) ? row.images : row.images ?? null,
+                };
+                return acc;
+              },
+              {}
+            );
+          } catch {
+            // Best-effort enrichment: keep using activities_full data when direct table media fetch is unavailable.
+            activityMediaById = {};
+          }
         }
 
         const participantMap: Record<string, string[]> = {};
@@ -401,7 +496,11 @@ export function useActivities() {
         });
 
         const remoteActivities = data.map((row: any) =>
-          mapActivity({ ...row, participant_ids: participantMap[row.id] ?? [] })
+          mapActivity({
+            ...row,
+            ...activityMediaById[row.id],
+            participant_ids: participantMap[row.id] ?? [],
+          })
         );
 
         setActivities(mergeActivities(remoteActivities));
@@ -588,6 +687,11 @@ export function useActivities() {
 
   const joinActivity = useCallback(async (activityId: string, userId: string): Promise<boolean> => {
     try {
+      if (!user?.isVerified) {
+        setError('Verification required. Verify your account before joining activities.');
+        return false;
+      }
+
       const existingStatus = joinStatuses[activityId];
       if (existingStatus && existingStatus !== 'cancelled') {
         return false;
@@ -652,7 +756,7 @@ export function useActivities() {
       setError(err.message ?? 'Failed to join activity');
       return false;
     }
-  }, [activities, delayRangeMs, isLegacyParticipantSchemaError, isMockActivity, joinStatuses, persistLocalJoinStatusHistory, scheduleMockDecision, syncJoinedActivities]);
+  }, [activities, delayRangeMs, isLegacyParticipantSchemaError, isMockActivity, joinStatuses, persistLocalJoinStatusHistory, scheduleMockDecision, syncJoinedActivities, user?.isVerified]);
 
   const leaveActivity = useCallback(async (activityId: string, userId: string): Promise<boolean> => {
     try {

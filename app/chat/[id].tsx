@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
+import { decode } from 'base64-arraybuffer';
 import { format } from 'date-fns';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
 import { useChat } from '../../hooks/useChat';
@@ -63,21 +64,72 @@ export default function GroupChatScreen() {
     await sendMessage(text, user.uid, user.displayName);
   };
 
-  const uploadChatImage = async (uri: string) => {
-    const response = await fetch(uri);
-    const blob = await response.blob();
+  const uploadChatImage = async (asset: ImagePicker.ImagePickerAsset) => {
+    const uri = asset.uri;
+    const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      });
+
+      try {
+        return await Promise.race([promise, timeoutPromise]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+
+    let uploadBody: Blob | ArrayBuffer;
+    let contentType = asset.mimeType || 'image/jpeg';
+
+    if (asset.base64) {
+      // Prefer image-picker base64 payload to avoid content:// URI read issues on some devices.
+      uploadBody = decode(asset.base64);
+    } else {
+      const response = await withTimeout(fetch(uri), 15000, 'Timed out while reading selected image.');
+      const blob = await withTimeout(response.blob(), 15000, 'Timed out while preparing selected image.');
+
+      if ((blob as any)?.size === 0) {
+        throw new Error('Could not read selected image data. The file appears empty.');
+      }
+
+      uploadBody = blob;
+      contentType = blob.type || contentType;
+    }
+
     const extension = (uri.split('.').pop() ?? 'jpg').split('?')[0];
     const objectPath = `${id}/${user?.uid ?? 'anon'}-${Date.now()}.${extension}`;
 
-    const { error } = await supabase.storage
+    const { error } = await (supabase as any).storage
       .from('chat-images')
-      .upload(objectPath, blob, {
+      .upload(objectPath, uploadBody, {
         upsert: false,
-        contentType: blob.type || 'image/jpeg',
+        contentType,
       });
 
     if (error) throw error;
-    return supabase.storage.from('chat-images').getPublicUrl(objectPath).data.publicUrl;
+    const publicResp = (supabase as any).storage.from('chat-images').getPublicUrl(objectPath);
+    const publicUrl = publicResp.data?.publicUrl;
+
+    // Try fetching the public URL to ensure the bucket is public; if not, request a signed URL.
+    if (publicUrl) {
+      try {
+        const test = await fetch(publicUrl, { method: 'HEAD' });
+        if (test.ok) return publicUrl;
+      } catch {
+        // fallthrough to signed URL creation
+      }
+    }
+
+    // If public URL not accessible (private bucket), create a time-limited signed URL.
+    const signed = await (supabase as any).storage.from('chat-images').createSignedUrl(objectPath, 60 * 60);
+    if (signed.error || !signed.data?.signedUrl) {
+      // As a last resort return the publicUrl (may 403) so the DB has some value.
+      return publicUrl ?? '';
+    }
+
+    return signed.data.signedUrl;
   };
 
   const handleAttachPhoto = async () => {
@@ -96,11 +148,12 @@ export default function GroupChatScreen() {
         mediaTypes: ['images'],
         allowsEditing: false,
         quality: 0.85,
+        base64: true,
       });
 
       if (result.canceled || !result.assets?.[0]?.uri) return;
 
-      const publicUrl = await uploadChatImage(result.assets[0].uri);
+      const publicUrl = await uploadChatImage(result.assets[0]);
       await sendImage(publicUrl, user.uid, user.displayName);
     } catch (error) {
       Alert.alert('Upload failed', 'Could not attach this photo. Please try again.');
