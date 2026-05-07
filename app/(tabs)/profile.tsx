@@ -544,6 +544,7 @@ export default function ProfileScreen() {
           </Text>
           <Text style={styles.profileBio}>{profileBio}</Text>
           <Text style={styles.location}>{user?.location || 'No location set'}</Text>
+          {accountEmail && <Text style={styles.accountEmail}>{accountEmail}</Text>}
           <TouchableOpacity
             style={styles.editBtn}
             onPress={() => setShowEditSheet(true)}
