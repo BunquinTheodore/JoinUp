@@ -9,6 +9,7 @@ import {
   Image,
   Dimensions,
   Pressable,
+  TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,6 +19,7 @@ import { Colors, Typography, Spacing, BorderRadius, Shadows, CategoryColors } fr
 import { NavBar } from '../../components/layout/NavBar';
 import { useActivities } from '../../hooks/useActivities';
 import { useLocation } from '../../hooks/useLocation';
+import { useUsers } from '../../hooks/useUsers';
 import { format } from 'date-fns';
 
 const { width } = Dimensions.get('window');
@@ -39,13 +41,19 @@ const PHILIPPINE_PLACES: PlaceOption[] = [
   { label: 'Batangas (Province)', keywords: ['batangas', 'bauan', 'mt. maculot', 'taal'] },
 ];
 
+type ViewMode = 'events' | 'users';
+
 export default function ExploreScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { activities, isLoading } = useActivities();
+  const { activities, isLoading: activitiesLoading } = useActivities();
+  const { users, isLoading: usersLoading } = useUsers();
   const { location } = useLocation();
+  const [viewMode, setViewMode] = useState<ViewMode>('events');
   const [showPlaceDropdown, setShowPlaceDropdown] = useState(false);
   const [selectedPlace, setSelectedPlace] = useState('All Philippines');
+  const [eventSearchQuery, setEventSearchQuery] = useState('');
+  const [userSearchQuery, setUserSearchQuery] = useState('');
 
   useEffect(() => {
     if (!location?.city) return;
@@ -66,15 +74,39 @@ export default function ExploreScreen() {
   );
 
   const filteredActivities = useMemo(() => {
-    if (selectedPlaceOption.label === 'All Philippines') {
-      return activities;
+    const byPlace = selectedPlaceOption.label === 'All Philippines'
+      ? activities
+      : activities.filter((activity) => {
+          const haystack = `${activity.location.name} ${activity.title}`.toLowerCase();
+          return selectedPlaceOption.keywords.some((keyword) => haystack.includes(keyword));
+        });
+
+    if (!eventSearchQuery.trim()) {
+      return byPlace;
     }
 
-    return activities.filter((activity) => {
-      const haystack = `${activity.location.name} ${activity.title}`.toLowerCase();
-      return selectedPlaceOption.keywords.some((keyword) => haystack.includes(keyword));
+    const query = eventSearchQuery.toLowerCase();
+    return byPlace.filter((activity) => {
+      const titleMatch = activity.title.toLowerCase().includes(query);
+      const locationMatch = activity.location.name.toLowerCase().includes(query);
+      const categoryMatch = activity.category.toLowerCase().includes(query);
+      return titleMatch || locationMatch || categoryMatch;
     });
-  }, [activities, selectedPlaceOption]);
+  }, [activities, eventSearchQuery, selectedPlaceOption]);
+
+  const filteredUsers = useMemo(() => {
+    if (!userSearchQuery.trim()) {
+      return users;
+    }
+
+    const query = userSearchQuery.toLowerCase();
+    return users.filter((user) => {
+      const nameMatch = user.displayName.toLowerCase().includes(query);
+      const bioMatch = user.bio.toLowerCase().includes(query);
+      const interestsMatch = user.interests.some((interest) => interest.toLowerCase().includes(query));
+      return nameMatch || bioMatch || interestsMatch;
+    });
+  }, [users, userSearchQuery]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -89,7 +121,24 @@ export default function ExploreScreen() {
         }
       />
 
-      {/* Location dropdown */}
+      {/* View mode tabs */}
+      <View style={styles.tabsContainer}>
+        <TouchableOpacity
+          style={[styles.tab, viewMode === 'events' && styles.tabActive]}
+          onPress={() => setViewMode('events')}
+        >
+          <Text style={[styles.tabText, viewMode === 'events' && styles.tabTextActive]}>Events</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, viewMode === 'users' && styles.tabActive]}
+          onPress={() => setViewMode('users')}
+        >
+          <Text style={[styles.tabText, viewMode === 'users' && styles.tabTextActive]}>Users</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Location dropdown (Events only) */}
+      {viewMode === 'events' && (
       <View style={styles.locationWrap}>
         <TouchableOpacity
           style={styles.locationPill}
@@ -121,27 +170,71 @@ export default function ExploreScreen() {
           </View>
         ) : null}
       </View>
+      )}
 
-      {showPlaceDropdown ? (
+      {showPlaceDropdown && viewMode === 'events' ? (
         <Pressable
           style={styles.dropdownBackdrop}
           onPress={() => setShowPlaceDropdown(false)}
         />
       ) : null}
 
+      {/* Event search bar (Events only) */}
+      {viewMode === 'events' && (
+      <View style={styles.searchContainer}>
+        <Ionicons name="search-outline" size={18} color={Colors.slate} style={styles.searchIcon} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search events by title or location"
+          placeholderTextColor={Colors.slate}
+          value={eventSearchQuery}
+          onChangeText={setEventSearchQuery}
+        />
+        {eventSearchQuery ? (
+          <TouchableOpacity onPress={() => setEventSearchQuery('')}>
+            <Ionicons name="close-circle" size={18} color={Colors.slate} />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      )}
+
+      {/* User search bar (Users only) */}
+      {viewMode === 'users' && (
+      <View style={styles.searchContainer}>
+        <Ionicons name="search-outline" size={18} color={Colors.slate} style={styles.searchIcon} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search by name or interests"
+          placeholderTextColor={Colors.slate}
+          value={userSearchQuery}
+          onChangeText={setUserSearchQuery}
+        />
+        {userSearchQuery ? (
+          <TouchableOpacity onPress={() => setUserSearchQuery('')}>
+            <Ionicons name="close-circle" size={18} color={Colors.slate} />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      )}
+
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
       >
-        {/* Section title */}
-        <Text style={styles.sectionTitle}>Happening Near You</Text>
+        {/* Events view */}
+        {viewMode === 'events' && (
+        <>
+          {/* Section title */}
+          <Text style={styles.sectionTitle}>Happening Near You</Text>
 
-        {isLoading ? (
-          <ActivityIndicator size="large" color={Colors.accent} style={styles.loader} />
-        ) : (
-          filteredActivities.length === 0 ? (
-            <Text style={styles.emptyText}>No activities found for this place yet.</Text>
-          ) : filteredActivities.map((activity, index) => {
+          {activitiesLoading ? (
+            <ActivityIndicator size="large" color={Colors.accent} style={styles.loader} />
+          ) : (
+            filteredActivities.length === 0 ? (
+              <Text style={styles.emptyText}>
+                {eventSearchQuery ? 'No activities found matching your search.' : 'No activities found for this place yet.'}
+              </Text>
+            ) : filteredActivities.map((activity, index) => {
             const chipColor = CategoryColors[activity.category] ?? Colors.accent;
             const joined = activity.maxSlots - activity.currentSlots;
             const dateStr = activity.dateTime
@@ -218,6 +311,87 @@ export default function ExploreScreen() {
               </Animated.View>
             );
           })
+          )}
+        </>
+        )}
+
+        {/* Users view */}
+        {viewMode === 'users' && (
+        <>
+          {/* Section title */}
+          <Text style={styles.sectionTitle}>Discover People</Text>
+
+          {usersLoading ? (
+            <ActivityIndicator size="large" color={Colors.accent} style={styles.loader} />
+          ) : (
+            filteredUsers.length === 0 ? (
+              <Text style={styles.emptyText}>{userSearchQuery ? 'No users found matching your search.' : 'No users available yet.'}</Text>
+            ) : filteredUsers.map((user, index) => (
+              <Animated.View
+                key={user.uid}
+                entering={FadeInDown.delay(index * 80).springify()}
+              >
+                <View
+                  style={[styles.userCard, Shadows.card]}
+                >
+                  {/* Profile photo */}
+                  <View style={styles.userPhotoContainer}>
+                    {user.photoURL ? (
+                      <Image
+                        source={{ uri: user.photoURL }}
+                        style={styles.userPhoto}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View style={styles.userPhotoPlaceholder}>
+                        <Ionicons name="person-outline" size={40} color={Colors.slate} />
+                      </View>
+                    )}
+                    {user.isVerified && (
+                      <View style={styles.verifiedBadge}>
+                        <Ionicons name="checkmark-circle" size={20} color={Colors.accent} />
+                      </View>
+                    )}
+                  </View>
+
+                  {/* User info */}
+                  <View style={styles.userInfo}>
+                    <View style={styles.userHeader}>
+                      <Text style={styles.userName} numberOfLines={1}>
+                        {user.displayName || 'Anonymous'}
+                      </Text>
+                      {user.ratingCount > 0 && (
+                        <View style={styles.ratingContainer}>
+                          <Ionicons name="star" size={14} color={Colors.accent} />
+                          <Text style={styles.ratingText}>{user.rating.toFixed(1)}</Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {user.bio && (
+                      <Text style={styles.userBio} numberOfLines={2}>
+                        {user.bio}
+                      </Text>
+                    )}
+
+                    {user.interests.length > 0 && (
+                      <View style={styles.interestsContainer}>
+                        {user.interests.slice(0, 3).map((interest, i) => (
+                          <View key={i} style={styles.interestTag}>
+                            <Text style={styles.interestText}>{interest}</Text>
+                          </View>
+                        ))}
+                        {user.interests.length > 3 && (
+                          <Text style={styles.moreInterests}>+{user.interests.length - 3}</Text>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                </View>
+              </Animated.View>
+            ))
+          )}
+        </>
         )}
       </ScrollView>
     </View>
@@ -234,6 +408,52 @@ const styles = StyleSheet.create({
     height: 44,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  tabsContainer: {
+    flexDirection: 'row',
+    marginHorizontal: Spacing.lg,
+    marginBottom: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.divider,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: Spacing.md,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tabActive: {
+    borderBottomColor: Colors.accent,
+  },
+  tabText: {
+    fontFamily: Typography.bodyMed,
+    fontSize: 16,
+    color: Colors.slate,
+  },
+  tabTextActive: {
+    color: Colors.accent,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: Spacing.lg,
+    marginBottom: Spacing.md,
+    backgroundColor: Colors.white,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    borderRadius: BorderRadius.input,
+    paddingHorizontal: Spacing.md,
+  },
+  searchIcon: {
+    marginRight: Spacing.sm,
+  },
+  searchInput: {
+    flex: 1,
+    fontFamily: Typography.body,
+    fontSize: 16,
+    color: Colors.text,
+    paddingVertical: Spacing.md,
   },
   locationWrap: {
     position: 'relative',
@@ -397,5 +617,94 @@ const styles = StyleSheet.create({
     color: Colors.slate,
     flexShrink: 1,
     minWidth: 0,
+  },
+  userCard: {
+    backgroundColor: Colors.white,
+    borderRadius: BorderRadius.card,
+    marginHorizontal: Spacing.lg,
+    marginBottom: Spacing.md,
+    padding: Spacing.md,
+    flexDirection: 'row',
+    gap: Spacing.md,
+  },
+  userPhotoContainer: {
+    position: 'relative',
+  },
+  userPhoto: {
+    width: 80,
+    height: 80,
+    borderRadius: BorderRadius.card,
+  },
+  userPhotoPlaceholder: {
+    width: 80,
+    height: 80,
+    borderRadius: BorderRadius.card,
+    backgroundColor: Colors.primary + '15',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  verifiedBadge: {
+    position: 'absolute',
+    bottom: -4,
+    right: -4,
+    backgroundColor: Colors.white,
+    borderRadius: 12,
+    ...Shadows.card,
+  },
+  userInfo: {
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  userHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.xs,
+  },
+  userName: {
+    fontFamily: Typography.bodyBold,
+    fontSize: 16,
+    color: Colors.text,
+    flex: 1,
+  },
+  ratingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    marginLeft: Spacing.sm,
+  },
+  ratingText: {
+    fontFamily: Typography.bodyMed,
+    fontSize: 12,
+    color: Colors.accent,
+  },
+  userBio: {
+    fontFamily: Typography.body,
+    fontSize: 13,
+    color: Colors.slate,
+    marginBottom: Spacing.xs,
+    lineHeight: 18,
+  },
+  interestsContainer: {
+    flexDirection: 'row',
+    gap: Spacing.xs,
+    flexWrap: 'wrap',
+  },
+  interestTag: {
+    backgroundColor: Colors.accent + '14',
+    borderRadius: BorderRadius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  interestText: {
+    fontFamily: Typography.body,
+    fontSize: 11,
+    color: Colors.accent,
+  },
+  moreInterests: {
+    fontFamily: Typography.body,
+    fontSize: 11,
+    color: Colors.slate,
+    paddingHorizontal: Spacing.xs,
   },
 });
