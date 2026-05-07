@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 import * as Location from 'expo-location';
 import { decode } from 'base64-arraybuffer';
 import { format } from 'date-fns';
@@ -65,7 +66,19 @@ export default function GroupChatScreen() {
   };
 
   const uploadChatImage = async (asset: ImagePicker.ImagePickerAsset) => {
-    const uri = asset.uri;
+    const shouldConvertToJpeg =
+      asset.mimeType?.toLowerCase().includes('heic') ||
+      asset.mimeType?.toLowerCase().includes('heif') ||
+      /\.(heic|heif)$/i.test(asset.uri.split('?')[0]);
+
+    const normalizedAsset = shouldConvertToJpeg
+      ? await ImageManipulator.manipulateAsync(asset.uri, [], {
+          compress: 0.9,
+          format: ImageManipulator.SaveFormat.JPEG,
+        })
+      : asset;
+
+    const uri = normalizedAsset.uri;
     const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
       let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -81,7 +94,7 @@ export default function GroupChatScreen() {
     };
 
     let uploadBody: Blob | ArrayBuffer;
-    let contentType = asset.mimeType || 'image/jpeg';
+    let contentType = shouldConvertToJpeg ? 'image/jpeg' : normalizedAsset.mimeType || 'image/jpeg';
 
     if (asset.base64) {
       // Prefer image-picker base64 payload to avoid content:// URI read issues on some devices.
@@ -98,38 +111,35 @@ export default function GroupChatScreen() {
       contentType = blob.type || contentType;
     }
 
-    const extension = (uri.split('.').pop() ?? 'jpg').split('?')[0];
-    const objectPath = `${id}/${user?.uid ?? 'anon'}-${Date.now()}.${extension}`;
+    const extension = shouldConvertToJpeg ? 'jpg' : (uri.split('.').pop() ?? 'jpg').split('?')[0];
+    const objectPath = `chat-messages/${id}/${user?.uid ?? 'anon'}-${Date.now()}.${extension}`;
 
-    const { error } = await (supabase as any).storage
-      .from('chat-images')
-      .upload(objectPath, uploadBody, {
-        upsert: false,
-        contentType,
-      });
+    try {
+      const { data, error } = await (supabase as any).storage
+        .from('activity-images')
+        .upload(objectPath, uploadBody, {
+          upsert: false,
+          contentType,
+        });
 
-    if (error) throw error;
-    const publicResp = (supabase as any).storage.from('chat-images').getPublicUrl(objectPath);
-    const publicUrl = publicResp.data?.publicUrl;
-
-    // Try fetching the public URL to ensure the bucket is public; if not, request a signed URL.
-    if (publicUrl) {
-      try {
-        const test = await fetch(publicUrl, { method: 'HEAD' });
-        if (test.ok) return publicUrl;
-      } catch {
-        // fallthrough to signed URL creation
+      if (error) {
+        console.error('Chat image upload error:', error);
+        throw error;
       }
-    }
 
-    // If public URL not accessible (private bucket), create a time-limited signed URL.
-    const signed = await (supabase as any).storage.from('chat-images').createSignedUrl(objectPath, 60 * 60);
-    if (signed.error || !signed.data?.signedUrl) {
-      // As a last resort return the publicUrl (may 403) so the DB has some value.
-      return publicUrl ?? '';
-    }
+      const publicResp = (supabase as any).storage.from('activity-images').getPublicUrl(objectPath);
+      const publicUrl = publicResp.data?.publicUrl;
 
-    return signed.data.signedUrl;
+      if (!publicUrl) {
+        throw new Error('Could not generate public URL for uploaded image');
+      }
+
+      console.log('Chat image uploaded successfully:', publicUrl);
+      return publicUrl;
+    } catch (err: any) {
+      console.error('Chat image upload failed:', err.message || err);
+      throw err;
+    }
   };
 
   const handleAttachPhoto = async () => {

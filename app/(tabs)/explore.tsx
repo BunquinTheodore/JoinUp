@@ -331,8 +331,10 @@ export default function ExploreScreen() {
                 key={user.uid}
                 entering={FadeInDown.delay(index * 80).springify()}
               >
-                <View
+                <TouchableOpacity
                   style={[styles.userCard, Shadows.card]}
+                  onPress={() => router.push(`/users/${user.uid}`)}
+                  activeOpacity={0.92}
                 >
                   {/* Profile photo */}
                   <View style={styles.userPhotoContainer}>
@@ -387,7 +389,7 @@ export default function ExploreScreen() {
                       </View>
                     )}
                   </View>
-                </View>
+                </TouchableOpacity>
               </Animated.View>
             ))
           )}

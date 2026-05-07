@@ -8,12 +8,16 @@ import {
   Image,
   ActivityIndicator,
   Alert,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
+import { readAsStringAsync } from 'expo-file-system/legacy';
+import { decode } from 'base64-arraybuffer';
 import { Colors, Typography, Spacing, BorderRadius, Shadows, CategoryColors } from '../../constants/theme';
 import { CategoryChip } from '../../components/ui/CategoryChip';
 import { BottomSheet } from '../../components/ui/BottomSheet';
@@ -220,32 +224,63 @@ export default function ProfileScreen() {
   }, [isUploadingPhoto]);
 
   const uploadProfilePhoto = useCallback(async (asset: ImagePicker.ImagePickerAsset): Promise<string> => {
-    const uri = asset.uri;
-    const extension = (uri.split('.').pop() ?? 'jpg').split('?')[0].toLowerCase();
+    const shouldConvertToJpeg =
+      asset.mimeType?.toLowerCase().includes('heic') ||
+      asset.mimeType?.toLowerCase().includes('heif') ||
+      /\.(heic|heif)$/i.test(asset.uri.split('?')[0]);
+
+    const normalizedAsset = shouldConvertToJpeg
+      ? await ImageManipulator.manipulateAsync(asset.uri, [], {
+          compress: 0.9,
+          format: ImageManipulator.SaveFormat.JPEG,
+        })
+      : asset;
+
+    const uri = normalizedAsset.uri;
+    const extension = shouldConvertToJpeg ? 'jpg' : (uri.split('.').pop() ?? 'jpg').split('?')[0].toLowerCase();
     const path = `profile-photos/${user?.uid ?? 'anon'}-${Date.now()}.${extension}`;
 
-    let uploadBody: Blob | File;
-    if ((asset as any).file) {
+    let uploadBody: Blob | ArrayBuffer;
+
+    if (Platform.OS !== 'web') {
+      const base64 = normalizedAsset.base64 ?? (await readAsStringAsync(uri, { encoding: 'base64' }));
+      if (!base64 || base64.length === 0) {
+        throw new Error('Could not read selected image data. Please try another photo.');
+      }
+
+      const decoded = decode(base64);
+      if (decoded.byteLength === 0) {
+        throw new Error('Selected image decoded to an empty file. Please try another photo.');
+      }
+
+      uploadBody = decoded;
+    } else if ((asset as any).file) {
       // Web returns a native File object; upload it directly to avoid fetch(uri) stalls.
       uploadBody = (asset as any).file as File;
     } else {
       const response = await withTimeout(fetch(uri), 15000, 'Timed out while reading selected image.');
-      uploadBody = await withTimeout(response.blob(), 15000, 'Timed out while preparing selected image.');
+      const blob = await withTimeout(response.blob(), 15000, 'Timed out while preparing selected image.');
+
+      if ((blob as any)?.size === 0) {
+        throw new Error('Could not read selected image data. Please try another photo.');
+      }
+
+      uploadBody = blob;
     }
 
     const { error: uploadError } = await withTimeout(
       supabase.storage
-        .from('chat-images')
+        .from('activity-images')
         .upload(path, uploadBody, {
           upsert: false,
-          contentType: uploadBody.type || 'image/jpeg',
+          contentType: shouldConvertToJpeg ? 'image/jpeg' : Platform.OS === 'web' && (uploadBody as any).type ? (uploadBody as any).type : 'image/jpeg',
         }),
       20000,
       'Timed out while uploading profile photo.'
     );
 
     if (uploadError) throw uploadError;
-    return supabase.storage.from('chat-images').getPublicUrl(path).data.publicUrl;
+    return supabase.storage.from('activity-images').getPublicUrl(path).data.publicUrl;
   }, [user?.uid]);
 
   const handleChangeProfilePhoto = useCallback(async () => {
@@ -274,11 +309,10 @@ export default function ProfileScreen() {
       const selectedAsset = result.assets[0];
       const photoUrl = await uploadProfilePhoto(selectedAsset);
       const updateResult = await withTimeout(
-        (async () =>
-          supabase
-            .from('profiles')
-            .update({ photo_url: photoUrl })
-            .eq('id', user.uid))(),
+        supabase
+          .from('profiles')
+          .update({ photo_url: photoUrl })
+          .eq('id', user.uid),
         15000,
         'Timed out while saving profile photo.'
       );

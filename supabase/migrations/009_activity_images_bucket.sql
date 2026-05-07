@@ -24,14 +24,22 @@ on conflict (id) do update
 -- Storage RLS Policies
 -- ============================================================
 
--- Anyone can read/download activity images (bucket is public)
+-- Public users can read/download activity images (bucket is public)
 create policy "activity-images: public read"
   on storage.objects for select
+  to public
+  using (bucket_id = 'activity-images');
+
+-- Authenticated users can read/download activity images
+create policy "activity-images: authenticated read"
+  on storage.objects for select
+  to authenticated
   using (bucket_id = 'activity-images');
 
 -- Only authenticated users can upload
 create policy "activity-images: authenticated upload"
   on storage.objects for insert
+  to authenticated
   with check (
     bucket_id = 'activity-images'
     and auth.role() = 'authenticated'
@@ -40,8 +48,8 @@ create policy "activity-images: authenticated upload"
 -- Users can only delete their own uploads (path starts with their uid)
 create policy "activity-images: owner delete"
   on storage.objects for delete
+  to authenticated
   using (
     bucket_id = 'activity-images'
-    and (storage.foldername(name))[1] = 'activity-covers'
     and auth.uid()::text = split_part(storage.filename(name), '-', 1)
   );
