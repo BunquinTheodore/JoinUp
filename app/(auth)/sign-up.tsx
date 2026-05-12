@@ -38,6 +38,17 @@ export default function SignUpScreen() {
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  const resetForm = () => {
+    setFullName('');
+    setEmail('');
+    setPassword('');
+    setAgeRange('18-24');
+    setInterests([]);
+    setConsentChecked(false);
+    setShowAgeDropdown(false);
+    setErrors({});
+  };
+
   const toggleInterest = (interest: string) => {
     setInterests((prev) =>
       prev.includes(interest)
@@ -73,9 +84,11 @@ export default function SignUpScreen() {
 
       if (result.requiresEmailConfirmation) {
         setInfoMessage('Account created. Please check your email and verify your account before signing in.');
+        resetForm();
         return;
       }
 
+      resetForm();
       router.replace('/(tabs)');
     } catch (err: any) {
       const message = String(err?.message ?? '').trim();

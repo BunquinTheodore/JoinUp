@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import * as Location from 'expo-location';
 import { decode } from 'base64-arraybuffer';
 import { format } from 'date-fns';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/theme';
+import { BottomSheet } from '../../components/ui/BottomSheet';
 import { useChat } from '../../hooks/useChat';
 import { useActivities } from '../../hooks/useActivities';
 import { useAuthStore } from '../../store/authStore';
@@ -40,6 +41,8 @@ export default function GroupChatScreen() {
   const [inputText, setInputText] = useState('');
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [isSharingLocation, setIsSharingLocation] = useState(false);
+  const [showPeopleSheet, setShowPeopleSheet] = useState(false);
+  const [memberProfiles, setMemberProfiles] = useState<Record<string, { displayName: string; photoUrl: string }>>({});
   const flatListRef = useRef<FlatList<Message>>(null);
 
   const activity = useMemo(
@@ -48,6 +51,53 @@ export default function GroupChatScreen() {
   );
   const joinStatus = getJoinStatus(id ?? '');
   const isChatAllowed = canAccessChat(id ?? '', activity?.hostId);
+  const memberIds = useMemo(
+    () => (activity?.participants ?? []).filter((participantId) => participantId !== activity?.hostId),
+    [activity?.hostId, activity?.participants]
+  );
+
+  const fetchMemberProfiles = useCallback(async () => {
+    if (!activity) return;
+
+    const ids = Array.from(new Set([activity.hostId, ...memberIds]));
+
+    if (ids.length === 0) {
+      setMemberProfiles({});
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, display_name, photo_url')
+      .in('id', ids);
+
+    if (error) return;
+
+    const nextProfiles: Record<string, { displayName: string; photoUrl: string }> = {};
+    (data ?? []).forEach((row: any) => {
+      nextProfiles[row.id] = {
+        displayName: row.display_name ?? '',
+        photoUrl: row.photo_url ?? '',
+      };
+    });
+
+    setMemberProfiles(nextProfiles);
+  }, [activity, memberIds]);
+
+  useEffect(() => {
+    void fetchMemberProfiles();
+  }, [fetchMemberProfiles]);
+
+  const getPersonName = (personId: string, fallbackLabel: string) => {
+    const profile = memberProfiles[personId];
+    return profile?.displayName?.trim() || fallbackLabel;
+  };
+
+  const getPersonInitial = (personId: string, fallbackLabel: string) => {
+    const profile = memberProfiles[personId];
+    const name = profile?.displayName?.trim() || fallbackLabel;
+    return name.charAt(0).toUpperCase();
+  };
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -325,6 +375,13 @@ export default function GroupChatScreen() {
             {activity?.participants.length ?? 0} participants
           </Text>
         </View>
+        <TouchableOpacity
+          onPress={() => setShowPeopleSheet(true)}
+          style={styles.peopleBtn}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="ellipsis-vertical" size={22} color={Colors.text} />
+        </TouchableOpacity>
       </View>
 
       {/* Pinned message banner */}
@@ -410,6 +467,64 @@ export default function GroupChatScreen() {
           />
         </TouchableOpacity>
       </View>
+
+      <BottomSheet
+        visible={showPeopleSheet}
+        onClose={() => setShowPeopleSheet(false)}
+        snapPoints={[520]}
+      >
+        <View style={styles.peopleSheet}>
+          <Text style={styles.peopleTitle}>Chat people</Text>
+
+          <View style={styles.peopleSection}>
+            <Text style={styles.peopleSectionLabel}>Host</Text>
+            {activity && (
+              <View style={[styles.personRow, styles.peopleCard]}>
+                <View style={styles.personAvatar}>
+                  <Text style={styles.personAvatarText}>
+                    {getPersonInitial(activity.hostId, activity.hostName || 'Host')}
+                  </Text>
+                </View>
+                <View style={styles.personInfo}>
+                  <Text style={styles.personName}>{getPersonName(activity.hostId, activity.hostName || 'Host')}</Text>
+                  <Text style={styles.personMeta}>Host</Text>
+                </View>
+              </View>
+            )}
+          </View>
+
+          <View style={styles.peopleSection}>
+            <Text style={styles.peopleSectionLabel}>Members ({memberIds.length})</Text>
+            {memberIds.length === 0 ? (
+              <View style={[styles.emptyMembers, styles.peopleCard]}>
+                <Text style={styles.emptyMembersText}>No members yet</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={memberIds}
+                keyExtractor={(item) => item}
+                renderItem={({ item: memberId, index }) => (
+                  <Animated.View entering={FadeIn.delay(index * 40)}>
+                    <View style={[styles.personRow, styles.peopleCard]}>
+                      <View style={styles.personAvatar}>
+                        <Text style={styles.personAvatarText}>
+                          {getPersonInitial(memberId, `Member ${index + 1}`)}
+                        </Text>
+                      </View>
+                      <View style={styles.personInfo}>
+                        <Text style={styles.personName}>{getPersonName(memberId, `Member ${index + 1}`)}</Text>
+                        <Text style={styles.personMeta}>Member</Text>
+                      </View>
+                    </View>
+                  </Animated.View>
+                )}
+                contentContainerStyle={styles.membersList}
+                scrollEnabled={false}
+              />
+            )}
+          </View>
+        </View>
+      </BottomSheet>
     </KeyboardAvoidingView>
   );
 }
@@ -437,6 +552,12 @@ const styles = StyleSheet.create({
   headerInfo: {
     flex: 1,
     marginLeft: Spacing.sm,
+  },
+  peopleBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerTitle: {
     fontFamily: Typography.bodyBold,
@@ -605,6 +726,75 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.white,
     borderTopWidth: 1,
     borderTopColor: Colors.divider,
+  },
+  peopleSheet: {
+    flex: 1,
+  },
+  peopleTitle: {
+    fontFamily: Typography.display,
+    fontSize: 22,
+    color: Colors.text,
+    marginBottom: Spacing.md,
+  },
+  peopleSection: {
+    marginBottom: Spacing.lg,
+  },
+  peopleSectionLabel: {
+    fontFamily: Typography.bodyBold,
+    fontSize: 14,
+    color: Colors.text,
+    marginBottom: Spacing.sm,
+  },
+  peopleCard: {
+    marginBottom: Spacing.sm,
+  },
+  membersList: {
+    paddingBottom: Spacing.sm,
+  },
+  personRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.white,
+    borderRadius: BorderRadius.card,
+    padding: Spacing.md,
+  },
+  personAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.peach,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.md,
+  },
+  personAvatarText: {
+    fontFamily: Typography.bodyBold,
+    fontSize: 15,
+    color: Colors.white,
+  },
+  personInfo: {
+    flex: 1,
+  },
+  personName: {
+    fontFamily: Typography.bodyMed,
+    fontSize: 15,
+    color: Colors.text,
+  },
+  personMeta: {
+    fontFamily: Typography.body,
+    fontSize: 12,
+    color: Colors.slate,
+    marginTop: 2,
+  },
+  emptyMembers: {
+    backgroundColor: Colors.white,
+    borderRadius: BorderRadius.card,
+    padding: Spacing.md,
+  },
+  emptyMembersText: {
+    fontFamily: Typography.body,
+    fontSize: 14,
+    color: Colors.slate,
   },
   attachBtn: {
     width: 44,

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Alert,
   Image,
   Dimensions,
+  FlatList,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,6 +23,7 @@ import { BottomSheet } from '../../../components/ui/BottomSheet';
 import { NavBar } from '../../../components/layout/NavBar';
 import { useActivities } from '../../../hooks/useActivities';
 import { useAuthStore } from '../../../store/authStore';
+import { supabase } from '../../../lib/supabase';
 
 export default function ActivityDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -33,6 +35,8 @@ export default function ActivityDetailScreen() {
 
   const [showJoinSheet, setShowJoinSheet] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
+  const [showPeopleSheet, setShowPeopleSheet] = useState(false);
+  const [memberProfiles, setMemberProfiles] = useState<Record<string, { displayName: string; photoUrl: string }>>({});
 
   const activity = useMemo(
     () => activities.find((a) => a.id === id) ?? null,
@@ -60,6 +64,54 @@ export default function ActivityDetailScreen() {
   const dateStr = activity.dateTime
     ? format(new Date(activity.dateTime), 'EEEE, MMMM d · h:mm a')
     : '';
+
+  const participantIds = useMemo(
+    () => activity.participants.filter((participantId) => participantId !== activity.hostId),
+    [activity.hostId, activity.participants]
+  );
+
+  const fetchMemberProfiles = useCallback(async () => {
+    const ids = Array.from(new Set([activity.hostId, ...participantIds]));
+
+    if (ids.length === 0) {
+      setMemberProfiles({});
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, display_name, photo_url')
+      .in('id', ids);
+
+    if (error) {
+      return;
+    }
+
+    const nextProfiles: Record<string, { displayName: string; photoUrl: string }> = {};
+    (data ?? []).forEach((row: any) => {
+      nextProfiles[row.id] = {
+        displayName: row.display_name ?? '',
+        photoUrl: row.photo_url ?? '',
+      };
+    });
+
+    setMemberProfiles(nextProfiles);
+  }, [activity.hostId, participantIds]);
+
+  useEffect(() => {
+    void fetchMemberProfiles();
+  }, [fetchMemberProfiles]);
+
+  const getPersonName = (personId: string, fallbackLabel: string) => {
+    const profile = memberProfiles[personId];
+    return profile?.displayName?.trim() || fallbackLabel;
+  };
+
+  const getPersonInitial = (personId: string, fallbackLabel: string) => {
+    const profile = memberProfiles[personId];
+    const name = profile?.displayName?.trim() || fallbackLabel;
+    return name.charAt(0).toUpperCase();
+  };
 
   const handleJoin = async () => {
     if (!user) return;
@@ -104,14 +156,26 @@ export default function ActivityDetailScreen() {
         title={activity.title}
         showBack
         rightAction={
-          isHost ? (
-            <TouchableOpacity
-              onPress={() => router.push(`/activity/${id}/manage` as never)}
-              style={styles.manageBtn}
-            >
-              <Ionicons name="settings-outline" size={22} color={Colors.text} />
-            </TouchableOpacity>
-          ) : null
+          (
+            <View style={styles.headerRightButtons}>
+              {isHost && (
+                <TouchableOpacity
+                  onPress={() => router.push(`/activity/${id}/manage`)}
+                  style={styles.headerBtn}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="settings" size={22} color={Colors.text} />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                onPress={() => setShowPeopleSheet(true)}
+                style={styles.headerBtn}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="ellipsis-vertical" size={22} color={Colors.text} />
+              </TouchableOpacity>
+            </View>
+          )
         }
       />
 
@@ -316,6 +380,62 @@ export default function ActivityDetailScreen() {
           />
         </View>
       </BottomSheet>
+
+      <BottomSheet
+        visible={showPeopleSheet}
+        onClose={() => setShowPeopleSheet(false)}
+        snapPoints={[520]}
+      >
+        <View style={styles.peopleSheet}>
+          <Text style={styles.peopleTitle}>Event people</Text>
+
+          <View style={styles.peopleSection}>
+            <Text style={styles.peopleSectionLabel}>Host</Text>
+            <View style={[styles.personRow, Shadows.card]}>
+              <View style={styles.personAvatar}>
+                <Text style={styles.personAvatarText}>
+                  {getPersonInitial(activity.hostId, activity.hostName || 'Host')}
+                </Text>
+              </View>
+              <View style={styles.personInfo}>
+                <Text style={styles.personName}>{getPersonName(activity.hostId, activity.hostName || 'Host')}</Text>
+                <Text style={styles.personMeta}>Host</Text>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.peopleSection}>
+            <Text style={styles.peopleSectionLabel}>Members ({participantIds.length})</Text>
+            {participantIds.length === 0 ? (
+              <View style={[styles.emptyMembers, Shadows.card]}>
+                <Text style={styles.emptyMembersText}>No members yet</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={participantIds}
+                keyExtractor={(item) => item}
+                renderItem={({ item: memberId, index }) => (
+                  <Animated.View entering={FadeInDown.delay(index * 40).springify()}>
+                    <View style={[styles.personRow, Shadows.card]}>
+                      <View style={styles.personAvatar}>
+                        <Text style={styles.personAvatarText}>
+                          {getPersonInitial(memberId, `Member ${index + 1}`)}
+                        </Text>
+                      </View>
+                      <View style={styles.personInfo}>
+                        <Text style={styles.personName}>{getPersonName(memberId, `Member ${index + 1}`)}</Text>
+                        <Text style={styles.personMeta}>Member</Text>
+                      </View>
+                    </View>
+                  </Animated.View>
+                )}
+                contentContainerStyle={styles.membersList}
+                scrollEnabled={false}
+              />
+            )}
+          </View>
+        </View>
+      </BottomSheet>
     </View>
   );
 }
@@ -334,6 +454,17 @@ const styles = StyleSheet.create({
     fontFamily: Typography.body,
     fontSize: 16,
     color: Colors.slate,
+  },
+  headerRightButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  headerBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   content: {
     paddingBottom: 120,
@@ -524,6 +655,73 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.md,
     ...Shadows.card,
+  },
+  peopleSheet: {
+    flex: 1,
+  },
+  peopleTitle: {
+    fontFamily: Typography.display,
+    fontSize: 22,
+    color: Colors.text,
+    marginBottom: Spacing.md,
+  },
+  peopleSection: {
+    marginBottom: Spacing.lg,
+  },
+  peopleSectionLabel: {
+    fontFamily: Typography.bodyBold,
+    fontSize: 14,
+    color: Colors.text,
+    marginBottom: Spacing.sm,
+  },
+  membersList: {
+    paddingBottom: Spacing.sm,
+  },
+  personRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.white,
+    borderRadius: BorderRadius.card,
+    padding: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  personAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.peach,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.md,
+  },
+  personAvatarText: {
+    fontFamily: Typography.bodyBold,
+    fontSize: 15,
+    color: Colors.white,
+  },
+  personInfo: {
+    flex: 1,
+  },
+  personName: {
+    fontFamily: Typography.bodyMed,
+    fontSize: 15,
+    color: Colors.text,
+  },
+  personMeta: {
+    fontFamily: Typography.body,
+    fontSize: 12,
+    color: Colors.slate,
+    marginTop: 2,
+  },
+  emptyMembers: {
+    backgroundColor: Colors.white,
+    borderRadius: BorderRadius.card,
+    padding: Spacing.md,
+  },
+  emptyMembersText: {
+    fontFamily: Typography.body,
+    fontSize: 14,
+    color: Colors.slate,
   },
   bottomActions: {
     flexDirection: 'row',

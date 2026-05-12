@@ -371,17 +371,17 @@ export function useActivities() {
           return;
         }
 
-        // For mock activities, default to approved since they are profile-backed only.
-        // For real activities in activities_joined with no participant row, prefer approved
-        // to preserve legacy/previously-joined chat access on refresh.
-        nextStatuses[activityId] = 'approved';
+        const currentActivity = activities.find((activity) => activity.id === activityId);
+        // Preserve pending access for approval-gated activities; only default to approved
+        // when the activity is not approval-gated or when we have no better local state.
+        nextStatuses[activityId] = currentActivity?.requiresApproval ? 'pending' : 'approved';
       }
     });
 
     setJoinStatuses(nextStatuses);
     localJoinStatusHistoryRef.current = nextStatuses;
     void persistLocalJoinStatusHistory(nextStatuses);
-  }, [isMockActivity, localJoinedIds, normalizeStatus, persistLocalJoinStatusHistory, user?.activitiesJoined, user?.uid]);
+  }, [activities, isMockActivity, localJoinedIds, normalizeStatus, persistLocalJoinStatusHistory, user?.activitiesJoined, user?.uid]);
 
   const resolveDueJoinRequests = useCallback(async () => {
     if (!user?.uid) return;
@@ -593,28 +593,6 @@ export function useActivities() {
   }, [user?.uid]);
 
   useEffect(() => {
-    if (!user?.uid) return;
-
-    if (runtimeResolverInterval) return;
-
-    const resolveNow = async () => {
-      if (runtimeResolverInFlight) return;
-      runtimeResolverInFlight = true;
-
-      try {
-        await runtimeResolveDueJoinRequests?.();
-      } catch {
-        // Silent fail: resolver polling should not block app usage.
-      } finally {
-        runtimeResolverInFlight = false;
-      }
-    };
-
-    void resolveNow();
-    runtimeResolverInterval = setInterval(resolveNow, RESOLVER_INTERVAL_MS);
-  }, [user?.uid]);
-
-  useEffect(() => {
     return () => {
       Object.values(mockDecisionTimers.current).forEach((timer) => clearTimeout(timer));
       mockDecisionTimers.current = {};
@@ -701,18 +679,19 @@ export function useActivities() {
 
       if (!currentActivity) return false;
 
-      setJoinStatuses((prev) => ({ ...prev, [activityId]: 'pending' }));
+      const nextStatus: JoinRequestStatus = currentActivity.requiresApproval ? 'pending' : 'approved';
+
+      setJoinStatuses((prev) => ({ ...prev, [activityId]: nextStatus }));
 
       // For real activities, insert into participants table
       if (!isMockActivity(activityId)) {
-        const decisionDueAt = new Date(Date.now() + delayRangeMs()).toISOString();
         const { error: joinError } = await supabase
           .from('participants')
           .insert({
             activity_id: activityId,
             user_id: userId,
-            status: 'pending',
-            decision_due_at: decisionDueAt,
+            status: nextStatus,
+            decision_due_at: nextStatus === 'pending' ? null : null,
             resolved_at: null,
           });
 
@@ -727,7 +706,7 @@ export function useActivities() {
             .insert({
               activity_id: activityId,
               user_id: userId,
-              status: 'joined',
+              status: nextStatus === 'pending' ? 'joined' : 'joined',
             });
 
           if (fallbackError) throw fallbackError;
@@ -742,7 +721,7 @@ export function useActivities() {
 
       // Persist joined activity IDs so chat visibility survives hook remounts and refreshes.
       await syncJoinedActivities(activityId, true);
-      const nextHistory = { ...localJoinStatusHistoryRef.current, [activityId]: 'pending' as JoinRequestStatus };
+      const nextHistory = { ...localJoinStatusHistoryRef.current, [activityId]: nextStatus };
       localJoinStatusHistoryRef.current = nextHistory;
       void persistLocalJoinStatusHistory(nextHistory);
 

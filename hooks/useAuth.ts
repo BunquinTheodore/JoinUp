@@ -342,12 +342,23 @@ export function useAuth() {
 
         await resolveSessionUser(authData.session, setUser);
       } catch (err: any) {
-        if (err?.message?.toLowerCase?.().includes('email not confirmed')) {
-          setError('Please verify your email first, then sign in.');
-        } else {
-          setError(err.message ?? 'Failed to sign in. Please check your credentials.');
+        let displayError = 'Failed to sign in. Please check your credentials.';
+        const rawMessage = String(err?.message ?? '').toLowerCase();
+        
+        if (err?.status === 504 || err?.statusCode === 504) {
+          displayError = 'Supabase service is temporarily unavailable. Please try again in a moment.';
+        } else if (err?.status >= 500 || err?.statusCode >= 500) {
+          displayError = 'Server error. Please try again later.';
+        } else if (rawMessage.includes('network') || rawMessage.includes('fetch')) {
+          displayError = 'Network error. Please check your connection and try again.';
+        } else if (rawMessage.includes('invalid login credentials')) {
+          displayError = 'Invalid email or password.';
+        } else if (rawMessage.includes('email not confirmed')) {
+          displayError = 'Please verify your email first, then sign in.';
         }
-        throw err;
+
+        setError(displayError);
+        throw new Error(displayError);
       } finally {
         setLoading(false);
       }
@@ -427,20 +438,38 @@ export function useAuth() {
         setUser(null);
         return { requiresEmailConfirmation: true };
       } catch (err: any) {
+        let displayError = 'Failed to create account. Please try again.';
         const rawMessage = String(err?.message ?? '').toLowerCase();
-        const duplicateEmail =
+        
+        // Check for Supabase-specific error structures
+        if (err?.status === 504 || err?.statusCode === 504) {
+          displayError = 'Supabase service is temporarily unavailable. Please try again in a moment.';
+        } else if (err?.status >= 500 || err?.statusCode >= 500) {
+          displayError = 'Server error. Please try again later.';
+        } else if (rawMessage.includes('network') || rawMessage.includes('fetch')) {
+          displayError = 'Network error. Please check your connection and try again.';
+        } else if (
           rawMessage.includes('user already registered') ||
           rawMessage.includes('already registered') ||
           rawMessage.includes('already exists') ||
           rawMessage.includes('email address is already in use') ||
-          rawMessage.includes('duplicate key');
-
-        if (duplicateEmail) {
-          setError('This email is already registered. Please sign in instead.');
-        } else {
-          setError(err.message ?? 'Failed to create account. Please try again.');
+          rawMessage.includes('duplicate key')
+        ) {
+          displayError = 'This email is already registered. Please sign in instead.';
+        } else if (rawMessage.includes('weak password')) {
+          displayError = 'Password is too weak. Use at least 6 characters.';
+        } else if (rawMessage.includes('invalid email')) {
+          displayError = 'Invalid email address.';
+        } else if (err?.message) {
+          // Use the actual error message if it's user-friendly
+          const msg = String(err.message).trim();
+          if (msg.length < 200 && !msg.includes('{') && !msg.includes('[')) {
+            displayError = msg;
+          }
         }
-        throw err;
+
+        setError(displayError);
+        throw new Error(displayError);
       } finally {
         setLoading(false);
       }

@@ -114,6 +114,9 @@ export default function ProfileScreen() {
     : taskVerified
       ? 'Verified by safety task'
       : 'Not verified yet';
+  const verificationSubtext = accountVerified
+    ? 'You can join events and access chat.'
+    : 'You can browse events, but joining is locked until you complete verification.';
 
   useEffect(() => {
     setEditName(user?.displayName ?? '');
@@ -579,6 +582,7 @@ export default function ProfileScreen() {
               {verificationMessage}
             </Text>
           </View>
+            <Text style={styles.verificationHelperText}>{verificationSubtext}</Text>
           <TouchableOpacity
             style={styles.editBtn}
             onPress={() => setShowEditSheet(true)}
@@ -1119,6 +1123,14 @@ const styles = StyleSheet.create({
     color: Colors.warning,
     width: '100%',
     paddingVertical: Spacing.xl,
+  },
+  verificationHelperText: {
+    fontFamily: Typography.body,
+    fontSize: 13,
+    color: Colors.slate,
+    textAlign: 'center',
+    marginBottom: Spacing.md,
+    marginTop: -Spacing.xs,
   },
   miniCard: {
     width: 160,

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -64,6 +64,8 @@ export default function ManageActivityScreen() {
   const insets = useSafeAreaInsets();
   const user = useAuthStore((s) => s.user);
   const { activities, leaveActivity, refetch } = useActivities();
+  const [pendingRequests, setPendingRequests] = useState<string[]>([]);
+  const [joinerProfiles, setJoinerProfiles] = useState<Record<string, { displayName: string; photoUrl: string }>>({});
 
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
@@ -261,6 +263,25 @@ export default function ManageActivityScreen() {
 
   const joined = activity.maxSlots - activity.currentSlots;
 
+  const getJoinerName = (userId: string) => {
+    const profile = joinerProfiles[userId];
+    if (profile?.displayName?.trim()) {
+      return profile.displayName.trim();
+    }
+
+    return `User ${userId.slice(0, 6)}`;
+  };
+
+  const getJoinerInitial = (userId: string) => {
+    const profile = joinerProfiles[userId];
+    const displayName = profile?.displayName?.trim();
+    if (displayName) {
+      return displayName.charAt(0).toUpperCase();
+    }
+
+    return userId.charAt(0).toUpperCase();
+  };
+
   const handleRemoveParticipant = (userId: string) => {
     Alert.alert(
       'Remove Participant',
@@ -276,6 +297,107 @@ export default function ManageActivityScreen() {
         },
       ]
     );
+  };
+
+  const fetchPendingRequests = useCallback(async () => {
+    if (!activity) return;
+    try {
+      const { data, error } = await supabase
+        .from('participants')
+        .select('user_id')
+        .eq('activity_id', activity.id)
+        .eq('status', 'pending');
+
+      if (error) throw error;
+
+      const ids = (data ?? []).map((row: any) => row.user_id as string);
+      setPendingRequests(ids);
+    } catch {
+      // ignore transient failures
+      setPendingRequests([]);
+    }
+  }, [activity]);
+
+  const fetchJoinerProfiles = useCallback(async () => {
+    if (!activity) return;
+
+    const ids = Array.from(new Set([
+      ...activity.participants,
+      ...pendingRequests,
+      activity.hostId,
+    ].filter((value): value is string => Boolean(value))));
+
+    if (ids.length === 0) {
+      setJoinerProfiles({});
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, display_name, photo_url')
+      .in('id', ids);
+
+    if (error) {
+      return;
+    }
+
+    const nextProfiles: Record<string, { displayName: string; photoUrl: string }> = {};
+    (data ?? []).forEach((row: any) => {
+      nextProfiles[row.id] = {
+        displayName: row.display_name ?? '',
+        photoUrl: row.photo_url ?? '',
+      };
+    });
+
+    setJoinerProfiles(nextProfiles);
+  }, [activity, pendingRequests]);
+
+  useEffect(() => {
+    void fetchPendingRequests();
+  }, [fetchPendingRequests]);
+
+  useEffect(() => {
+    void fetchJoinerProfiles();
+  }, [fetchJoinerProfiles]);
+
+  const handleApprove = async (userId: string) => {
+    if (!activity) return;
+    try {
+      const { error } = await supabase
+        .from('participants')
+        .update({ status: 'approved', resolved_at: new Date().toISOString() })
+        .eq('activity_id', activity.id)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      await refetch();
+      void fetchPendingRequests();
+      void fetchJoinerProfiles();
+      Alert.alert('Approved', 'Participant approved');
+    } catch {
+      Alert.alert('Error', 'Could not approve participant');
+    }
+  };
+
+  const handleReject = async (userId: string) => {
+    if (!activity) return;
+    try {
+      const { error } = await supabase
+        .from('participants')
+        .update({ status: 'rejected', resolved_at: new Date().toISOString() })
+        .eq('activity_id', activity.id)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      await refetch();
+      void fetchPendingRequests();
+      void fetchJoinerProfiles();
+      Alert.alert('Rejected', 'Participant rejected');
+    } catch {
+      Alert.alert('Error', 'Could not reject participant');
+    }
   };
 
   const handleCancelActivity = () => {
@@ -346,6 +468,46 @@ export default function ManageActivityScreen() {
             </TouchableOpacity>
           </View>
 
+          {/* Join requests (visible to host) */}
+          {user?.uid === activity.hostId && (
+            <>
+              <Text style={styles.sectionTitle}>Join Requests ({pendingRequests.length})</Text>
+
+              {pendingRequests.length === 0 ? (
+                <View style={[styles.participantRow, Shadows.card]}>
+                  <Text style={styles.emptyGalleryText}>No pending requests</Text>
+                </View>
+              ) : (
+                <FlatList
+                  data={pendingRequests}
+                  keyExtractor={(item) => item}
+                  renderItem={({ item: userId, index }) => (
+                    <Animated.View entering={FadeInDown.delay(index * 50).springify()}>
+                      <View style={[styles.participantRow, Shadows.card]}>
+                        <View style={styles.participantAvatar}>
+                          <Text style={styles.participantAvatarText}>{getJoinerInitial(userId)}</Text>
+                        </View>
+                        <View style={styles.participantInfo}>
+                          <Text style={styles.participantName}>{getJoinerName(userId)}</Text>
+                        </View>
+                        <View style={styles.requestActions}>
+                          <TouchableOpacity onPress={() => handleApprove(userId)} style={styles.approveBtn}>
+                            <Ionicons name="checkmark-circle" size={22} color={Colors.success} />
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => handleReject(userId)} style={styles.rejectBtn}>
+                            <Ionicons name="close-circle" size={22} color={Colors.danger} />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    </Animated.View>
+                  )}
+                  contentContainerStyle={styles.listContent}
+                  scrollEnabled={false}
+                />
+              )}
+            </>
+          )}
+
           {/* Participants list */}
           <Text style={styles.sectionTitle}>Participants ({activity.participants.length})</Text>
 
@@ -356,11 +518,11 @@ export default function ManageActivityScreen() {
               <Animated.View entering={FadeInDown.delay(index * 50).springify()}>
                 <View style={[styles.participantRow, Shadows.card]}>
                   <View style={styles.participantAvatar}>
-                    <Ionicons name="person" size={18} color={Colors.white} />
+                    <Text style={styles.participantAvatarText}>{getJoinerInitial(userId)}</Text>
                   </View>
                   <View style={styles.participantInfo}>
                     <Text style={styles.participantName}>
-                      {userId === activity.hostId ? `${userId} (Host)` : userId}
+                      {userId === activity.hostId ? `${getJoinerName(userId)} (Host)` : getJoinerName(userId)}
                     </Text>
                   </View>
                   {userId !== activity.hostId && (
@@ -452,8 +614,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: Spacing.md,
   },
+  participantAvatarText: {
+    fontFamily: Typography.bodyBold,
+    fontSize: 15,
+    color: Colors.white,
+  },
   participantInfo: {
     flex: 1,
+  },
+  requestActions: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    alignItems: 'center',
+  },
+  approveBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rejectBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   participantName: {
     fontFamily: Typography.bodyMed,

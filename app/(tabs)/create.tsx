@@ -92,6 +92,8 @@ const isMissingImagesColumnError = (error: unknown): boolean => {
   );
 };
 
+const createDefaultEventDate = () => new Date(Date.now() + 60 * 60 * 1000);
+
 export default function CreateActivityScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -104,7 +106,7 @@ export default function CreateActivityScreen() {
   const [locationName, setLocationName] = useState('');
   const [maxSlots, setMaxSlots] = useState('8');
   const [requiresApproval, setRequiresApproval] = useState(false);
-  const [date, setDate] = useState(new Date(Date.now() + 60 * 60 * 1000));
+  const [date, setDate] = useState(() => createDefaultEventDate());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -114,6 +116,21 @@ export default function CreateActivityScreen() {
   const [locationCoords, setLocationCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
   const isVerified = !!user?.isVerified;
+
+  const resetForm = () => {
+    setTitle('');
+    setDescription('');
+    setCategory('');
+    setLocationName('');
+    setMaxSlots('8');
+    setRequiresApproval(false);
+    setDate(createDefaultEventDate());
+    setShowDatePicker(false);
+    setPickerMode('date');
+    setSelectedImages([]);
+    setLocationCoords(null);
+    setErrors({});
+  };
 
   const parsedMaxSlots = useMemo(() => Number.parseInt(maxSlots, 10), [maxSlots]);
 
@@ -436,6 +453,7 @@ export default function CreateActivityScreen() {
       }
 
       await refetch();
+      resetForm();
 
       Alert.alert('Success', 'Activity created successfully!', [
         { text: 'Open activity', onPress: () => router.push(`/activity/${data.id}`) },

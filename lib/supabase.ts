@@ -1,6 +1,6 @@
 import 'react-native-url-polyfill/auto';
 import Constants from 'expo-constants';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
@@ -50,7 +50,7 @@ const createThrowingProxy = (message: string) =>
     },
   });
 
-export const supabase = isSupabaseConfigured
+export const supabase: SupabaseClient = isSupabaseConfigured
   ? createClient(supabaseConfig.url!, supabaseConfig.anonKey!, {
       auth: {
         storage: AsyncStorage,
@@ -59,6 +59,6 @@ export const supabase = isSupabaseConfigured
         detectSessionInUrl: Platform.OS === 'web',
       },
     })
-  : createThrowingProxy(
+  : (createThrowingProxy(
       'Supabase is not configured. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_KEY (or NEXT_PUBLIC variants) and restart Expo.'
-    );
+    ) as unknown as SupabaseClient);
